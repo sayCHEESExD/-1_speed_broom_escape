@@ -368,6 +368,59 @@ const injectStyles = (): void => {
   const style = document.createElement('style');
   style.textContent = `
 /*
+ * Thumb-control sizes, as variables the rest of the HUD can read.
+ *
+ * These are sized in vmin with PIXEL bounds rather than in the HUD unit: a
+ * thumb is a physical size, so the stick and the FLY button must stay a
+ * comfortable target however small the screen, and must not grow into a
+ * dinner plate on a tablet. The resting radius is the same formula the stick
+ * uses in script (RADIUS_MIN/RADIUS_VMIN/RADIUS_MAX) - keep the two together.
+ */
+:root {
+  --aoe-stick-rest: clamp(${RADIUS_MIN}px, ${RADIUS_VMIN * 100}vmin, ${RADIUS_MAX}px);
+  --aoe-fly-size: clamp(74px, 17vmin, 108px);
+  --aoe-stick-inset: 26px;
+  /*
+   * The resting stick sits just RIGHT of the left rail's footprint rather than
+   * in the corner: the rail is anchored left-middle, and on a short landscape
+   * screen its lowest tile reaches down into the corner the stick rests in.
+   * Read from the rail's own published reserve, so the two cannot collide at
+   * any size.
+   */
+  --aoe-stick-inset-x: max(var(--aoe-stick-inset), var(--hud-rail-reserve, 0px));
+  --aoe-fly-inset-x: 24px;
+  --aoe-fly-inset-y: 34px;
+}
+
+/*
+ * What the thumb controls claim at the bottom of the screen, PUBLISHED for
+ * the HUD's bottom dock rather than guessed at by it.
+ *
+ * Portrait: the stick and the FLY button between them fill the bottom edge,
+ * so the dock is lifted clear over the taller of the two.
+ * Landscape: there is room between them, so the dock stays at the bottom
+ * edge and is narrowed to fit between them instead.
+ */
+@media (orientation: portrait) {
+  body.aoe-touch-mode {
+    --hud-touch-clear: max(
+      calc(var(--aoe-stick-inset) + 2 * var(--aoe-stick-rest)),
+      calc(var(--aoe-fly-inset-y) + var(--aoe-fly-size))
+    );
+  }
+}
+@media (orientation: landscape) {
+  body.aoe-touch-mode {
+    --hud-touch-side: calc(
+      max(
+        calc(var(--aoe-stick-inset-x) + 2 * var(--aoe-stick-rest)),
+        calc(var(--aoe-fly-inset-x) + var(--aoe-fly-size))
+      ) + 10px
+    );
+  }
+}
+
+/*
  * The touch layer itself is inert - the STICK is drawn here but read from the
  * canvas underneath, so a finger that lands beside it still steers. Only the
  * action button takes events.
@@ -385,11 +438,11 @@ const injectStyles = (): void => {
 .aoe-touch--hidden { opacity: 0; pointer-events: none; }
 
 .aoe-touch__stick {
-  --aoe-stick-radius: 64px;
+  --aoe-stick-radius: var(--aoe-stick-rest);
   position: fixed;
-  left: calc(var(--aoe-safe-l, 0px) + 26px + var(--aoe-stick-radius));
+  left: calc(var(--aoe-stick-inset-x) + var(--aoe-stick-radius));
   top: auto;
-  bottom: calc(var(--aoe-safe-b, 0px) + 26px);
+  bottom: calc(var(--aoe-safe-b, 0px) + var(--aoe-stick-inset));
   width: calc(var(--aoe-stick-radius) * 2);
   height: calc(var(--aoe-stick-radius) * 2);
   margin: calc(var(--aoe-stick-radius) * -1) 0 0 calc(var(--aoe-stick-radius) * -1);
@@ -419,10 +472,10 @@ const injectStyles = (): void => {
 
 .aoe-touch__jump {
   position: fixed;
-  right: calc(var(--aoe-safe-r, 0px) + 24px);
-  bottom: calc(var(--aoe-safe-b, 0px) + 34px);
-  width: clamp(74px, 17vmin, 108px);
-  height: clamp(74px, 17vmin, 108px);
+  right: calc(var(--aoe-safe-r, 0px) + var(--aoe-fly-inset-x));
+  bottom: calc(var(--aoe-safe-b, 0px) + var(--aoe-fly-inset-y));
+  width: var(--aoe-fly-size);
+  height: var(--aoe-fly-size);
   padding: 0;
   border: 3px solid #ffffff;
   border-radius: 50%;

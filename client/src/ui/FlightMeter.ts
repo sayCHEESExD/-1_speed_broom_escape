@@ -131,30 +131,28 @@ const injectStyles = (): void => {
   const style = document.createElement('style');
   style.textContent = `
 .aoe-fly {
-  position: fixed;
-  left: 50%;
   /*
-   * The very BOTTOM of the screen, under the Speed/Level bar rather than
-   * beside it. The two are read at completely different moments - Speed
-   * between runs, flight during one - so stacking them keeps each a single
-   * glance, and the flight bar being the lower of the two puts it closest to
-   * the action and furthest from anything it could be confused with.
+   * The very BOTTOM of the HUD, under the Speed/Level bar rather than beside
+   * it. The two are read at completely different moments - Speed between
+   * runs, flight during one - so stacking them keeps each a single glance,
+   * and the flight bar being the lower of the two puts it closest to the
+   * action. The bottom dock (\`.aoe-dock-bottom\`, hudStyles) does the
+   * anchoring and the stacking; it is the LAST child there, so it is always
+   * the lowest thing in it. Sizes are in the HUD unit (--u).
    */
-  bottom: max(10px, env(safe-area-inset-bottom, 0px));
-  transform: translateX(-50%);
-  width: min(720px, 74vw);
+  position: relative;
+  width: 100%;
   pointer-events: none;
   user-select: none;
-  z-index: 21;
   transition: transform 140ms ease;
 }
 
 .aoe-fly__bar {
   position: relative;
-  height: clamp(20px, 2.6vw, 30px);
+  height: max(16px, calc(27 * var(--u)));
   border-radius: 999px;
-  border: 3px solid var(--aoe-ink);
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+  border: max(1.5px, calc(3 * var(--u))) solid var(--aoe-ink);
+  box-shadow: 0 calc(4 * var(--u)) calc(10 * var(--u)) rgba(0, 0, 0, 0.45);
   overflow: hidden;
   /* An empty track reads as dark stone, so the fill is the only lit thing. */
   background-color: #1b2130;
@@ -172,7 +170,7 @@ const injectStyles = (): void => {
   width: 0%;
   border-radius: 999px 4px 4px 999px;
   background: linear-gradient(90deg, #5b8cff 0%, #8b5cf6 55%, #d46bff 100%);
-  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.2);
+  box-shadow: inset 0 calc(-3 * var(--u)) 0 rgba(0, 0, 0, 0.2);
   /*
    * Fast, and faster still than the Speed bar's. This is a live gauge of a
    * key being held: a slow transition would make the bar lag the thrust it is
@@ -187,36 +185,37 @@ const injectStyles = (): void => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: clamp(10px, 1.25vw, 15px);
+  font-size: max(10px, calc(14 * var(--u)));
   letter-spacing: 0.04em;
   white-space: nowrap;
 }
 
 .aoe-fly__hint {
-  margin-top: 5px;
+  margin-top: calc(5 * var(--u));
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  font-size: clamp(9px, 1vw, 12px);
+  gap: calc(7 * var(--u));
+  font-size: max(9px, calc(12 * var(--u)));
   letter-spacing: 0.1em;
   color: rgba(226, 232, 255, 0.72);
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+  text-shadow: 0 calc(2 * var(--u)) calc(4 * var(--u)) rgba(0, 0, 0, 0.6);
 }
 .aoe-fly__key {
-  padding: 2px 7px;
-  border: 2px solid rgba(226, 232, 255, 0.5);
-  border-bottom-width: 3px;
-  border-radius: 5px;
+  padding: calc(2 * var(--u)) calc(7 * var(--u));
+  border: max(1px, calc(2 * var(--u))) solid rgba(226, 232, 255, 0.5);
+  border-bottom-width: max(1.5px, calc(3 * var(--u)));
+  border-radius: calc(5 * var(--u));
   background: rgba(12, 16, 26, 0.7);
   color: #e2e8ff;
 }
 
 /* Spending: the bar lifts and the fill brightens. */
-.aoe-fly--active { transform: translateX(-50%) translateY(-2px); }
+.aoe-fly--active { transform: translateY(calc(-2 * var(--u))); }
 .aoe-fly--active .aoe-fly__fill {
   background: linear-gradient(90deg, #8fd4ff 0%, #b48bff 55%, #ff9df5 100%);
-  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.2), 0 0 14px rgba(180, 139, 255, 0.85);
+  box-shadow: inset 0 calc(-3 * var(--u)) 0 rgba(0, 0, 0, 0.2),
+    0 0 calc(14 * var(--u)) rgba(180, 139, 255, 0.85);
 }
 
 /* Low: amber and pulsing, so the warning arrives BEFORE the commitment. */
@@ -236,22 +235,12 @@ const injectStyles = (): void => {
   color: #ff9d9d;
 }
 
-/* The key cap is desktop only; a phone has the FLY button instead. */
-body.aoe-touch-mode .aoe-fly__hint { display: none; }
 /*
- * On a phone the bar sits ABOVE the thumb controls, not between them.
- *
- * The stick owns the bottom-left corner and the FLY button the bottom-right,
- * and they are TALL - the stick is over a hundred pixels of it. A centred bar
- * squeezed into what is left ends up a few pixels from a control a thumb is
- * resting on, which is both unreadable and in the way. Lifted clear of both,
- * it is still the lowest readable thing on screen and still directly over the
- * button it reports on.
+ * The key cap is desktop only; a phone has the FLY button instead. Where the
+ * bar sits relative to the thumb controls is the dock's job: the touch layer
+ * publishes how much room they take.
  */
-body.aoe-touch-mode .aoe-fly {
-  bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 154px);
-  width: min(420px, 62vw);
-}
+body.aoe-touch-mode .aoe-fly__hint { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .aoe-fly__fill { transition: none; }

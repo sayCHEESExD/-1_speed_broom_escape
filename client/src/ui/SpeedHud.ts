@@ -119,18 +119,14 @@ const injectStyles = (): void => {
   const style = document.createElement('style');
   style.textContent = `
 .aoe-hud {
-  position: fixed;
-  left: 50%;
   /*
-   * Lifted clear of the FLIGHT METER, which owns the bottom edge.
-   *
-   * The offset is the flight bar's own height plus its key cap plus a gap.
-   * Two bars stacked is the whole bottom-of-screen layout, and the order is
-   * deliberate: the one being watched during a jump is nearest the thumb.
+   * NOT positioned here. It lives in the bottom dock (\`.aoe-dock-bottom\` in
+   * hudStyles), which anchors it bottom-centre, gives it its width, and
+   * stacks it above the flight meter - so its placement can never drift from
+   * the meter's height, at any window size.
    */
-  bottom: calc(3.5vh + 54px);
-  transform: translateX(-50%);
-  width: min(720px, 74vw);
+  position: relative;
+  width: 100%;
   pointer-events: none;
   user-select: none;
   /*
@@ -148,14 +144,19 @@ const injectStyles = (): void => {
  * -webkit-text-stroke would be one declaration, but it thins badly at small
  * sizes on some platforms and this reads identically everywhere.
  */
+/* Every size below is in the HUD unit (--u, hudStyles), so the bar scales
+ * with the rest of the HUD as one design. */
 .aoe-hud__speed,
 .aoe-hud__level,
 .aoe-hud__amount {
   color: #ffffff;
   text-shadow:
-    3px 0 0 #12181f, -3px 0 0 #12181f, 0 3px 0 #12181f, 0 -3px 0 #12181f,
-    2px 2px 0 #12181f, -2px 2px 0 #12181f, 2px -2px 0 #12181f, -2px -2px 0 #12181f,
-    0 5px 9px rgba(0, 0, 0, 0.45);
+    var(--hud-o) 0 0 #12181f, calc(-1 * var(--hud-o)) 0 0 #12181f,
+    0 var(--hud-o) 0 #12181f, 0 calc(-1 * var(--hud-o)) 0 #12181f,
+    var(--hud-o2) var(--hud-o2) 0 #12181f, calc(-1 * var(--hud-o2)) var(--hud-o2) 0 #12181f,
+    var(--hud-o2) calc(-1 * var(--hud-o2)) 0 #12181f,
+    calc(-1 * var(--hud-o2)) calc(-1 * var(--hud-o2)) 0 #12181f,
+    0 calc(5 * var(--u)) calc(9 * var(--u)) rgba(0, 0, 0, 0.45);
 }
 
 .aoe-hud__speed-row {
@@ -163,11 +164,11 @@ const injectStyles = (): void => {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: calc(10 * var(--u));
+  margin-bottom: calc(8 * var(--u));
 }
 .aoe-hud__speed {
-  font-size: clamp(24px, 3.5vw, 46px);
+  font-size: max(18px, calc(42 * var(--u)));
   letter-spacing: 0.01em;
   line-height: 1.05;
   white-space: nowrap;
@@ -175,21 +176,22 @@ const injectStyles = (): void => {
 /* The rebirth multiplier: purple, smaller, and sitting off the baseline of the
  * Speed figure rather than centred with it. */
 .aoe-hud__multi {
-  font-size: clamp(11px, 1.35vw, 18px);
+  font-size: max(10px, calc(16 * var(--u)));
   color: #d46bff;
   white-space: nowrap;
   padding-bottom: 0.35em;
   text-shadow:
-    2px 0 0 #2a1038, -2px 0 0 #2a1038, 0 2px 0 #2a1038, 0 -2px 0 #2a1038,
-    0 3px 6px rgba(0, 0, 0, 0.4);
+    var(--hud-o2) 0 0 #2a1038, calc(-1 * var(--hud-o2)) 0 0 #2a1038,
+    0 var(--hud-o2) 0 #2a1038, 0 calc(-1 * var(--hud-o2)) 0 #2a1038,
+    0 calc(3 * var(--u)) calc(6 * var(--u)) rgba(0, 0, 0, 0.4);
 }
 
 .aoe-hud__bar {
   position: relative;
-  height: clamp(34px, 4.6vw, 58px);
+  height: max(26px, calc(50 * var(--u)));
   border-radius: 999px;
-  border: 4px solid #12181f;
-  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.4);
+  border: max(2px, calc(4 * var(--u))) solid #12181f;
+  box-shadow: 0 calc(5 * var(--u)) calc(12 * var(--u)) rgba(0, 0, 0, 0.4);
   overflow: hidden;
   /*
    * The empty track is a studded white plate, matching the brick surfaces in
@@ -199,7 +201,7 @@ const injectStyles = (): void => {
   background-image:
     linear-gradient(90deg, rgba(0, 0, 0, 0.07) 1px, transparent 1px),
     linear-gradient(0deg, rgba(0, 0, 0, 0.07) 1px, transparent 1px);
-  background-size: 14px 14px;
+  background-size: calc(14 * var(--u)) calc(14 * var(--u));
 }
 /*
  * The progress fill is the rainbow, and the level name sits ON it - so the bar
@@ -219,7 +221,7 @@ const injectStyles = (): void => {
     #ff9c3d 84%,
     #ff5a4d 100%
   );
-  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.16);
+  box-shadow: inset 0 calc(-4 * var(--u)) 0 rgba(0, 0, 0, 0.16);
   transition: width 130ms linear;
 }
 .aoe-hud__level,
@@ -229,11 +231,11 @@ const injectStyles = (): void => {
   bottom: 0;
   display: flex;
   align-items: center;
-  font-size: clamp(15px, 1.95vw, 25px);
+  font-size: max(12px, calc(22 * var(--u)));
   white-space: nowrap;
 }
-.aoe-hud__level { left: 18px; }
-.aoe-hud__amount { right: 18px; }
+.aoe-hud__level { left: calc(18 * var(--u)); }
+.aoe-hud__amount { right: calc(18 * var(--u)); }
 
 .aoe-hud--levelup .aoe-hud__bar {
   animation: aoe-hud-pop 460ms ease-out;
@@ -242,19 +244,6 @@ const injectStyles = (): void => {
   0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 226, 120, 0.9); }
   35% { transform: scale(1.03); box-shadow: 0 0 0 9px rgba(255, 226, 120, 0); }
   100% { transform: scale(1); box-shadow: 0 5px 12px rgba(0, 0, 0, 0.4); }
-}
-
-/*
- * Touch controls own the bottom corners, so the HUD lifts clear of them - and
- * clear of the FLIGHT METER, which on a phone sits between the two.
- *
- * The stack from the bottom of a phone screen up is: thumb controls, the
- * flight bar, this, and then the Speed-gain popups' band well above. Each
- * offset here is what leaves the next one room.
- */
-body.aoe-touch-mode .aoe-hud {
-  bottom: calc(3.5vh + 168px);
-  width: min(560px, 62vw);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -8,6 +8,7 @@ import {
   type SetAvatarMessage,
   type StageAwardedMessage,
   type SetIdentityMessage,
+  type GuestIdMessage,
 } from '@broom/shared';
 import { Client, getStateCallbacks, type Room } from 'colyseus.js';
 import { clientConfig } from '../config/clientConfig.js';
@@ -153,9 +154,18 @@ export class NetworkClient {
    * have mattered.
    */
   sendIdentity(token: string | null): void {
-    const message: SetIdentityMessage = { token: token ?? '' };
-    this.room?.send(MessageType.SetIdentity, message);
+    const next = token ?? '';
+    // DEDUPED: the portal re-announces the same login on avatar and settings
+    // changes, and every message costs the server a Bloxity round trip. Only
+    // a real change - sign-in, sign-out, a different account - is sent.
+    if (!this.room || next === this.sentToken) return;
+    this.sentToken = next;
+    const message: SetIdentityMessage = { token: next };
+    this.room.send(MessageType.SetIdentity, message);
   }
+
+  /** The token the server was last told about for the current room ('' = signed out). */
+  private sentToken = '';
 
   get sessionId(): string | null {
     return this.room?.sessionId ?? null;
@@ -204,6 +214,7 @@ export class NetworkClient {
 
     this.client ??= new Client(clientConfig.serverUrl);
     const playerId = resolvePlayerId();
+    const token = this.identity?.() ?? '';
     const attempts = JOIN_BACKOFF_MS.length + 1;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -213,11 +224,13 @@ export class NetworkClient {
           // The Bloxity TOKEN, verified by the server before it binds an
           // account. Optional: a signed-out player simply has none, and the
           // room falls back to the browser-stored id exactly as it always did.
-          bloxityToken: this.identity?.() ?? undefined,
+          bloxityToken: token || undefined,
           // Sent with the join rather than after it, so players already in the
           // room draw this one correctly from their very first patch.
           avatar: this.look?.() ?? undefined,
         });
+        // What the server now knows, so an unchanged token is not re-sent.
+        this.sentToken = token;
         break;
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
@@ -367,6 +380,22 @@ export class NetworkClient {
 
     room.onMessage<StageAwardedMessage>(MessageType.StageAwarded, (message) => {
       this.handlers.onStageAwarded?.(message);
+    });
+
+    /*
+     * This browser's guest progress was migrated into an account, so its old
+     * guest id is spent: that copy is kept as a recovery copy and never loaded
+     * again. The new id is stored, so the next visit resumes the NEW guest
+     * progress instead of starting over.
+     */
+    room.onMessage<GuestIdMessage>(MessageType.GuestId, (message) => {
+      const id = message?.playerId;
+      if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return;
+      try {
+        window.localStorage.setItem(PLAYER_ID_KEY, id);
+      } catch {
+        /* storage blocked: this browser simply starts fresh next time */
+      }
     });
 
     room.onError((code, message) => {

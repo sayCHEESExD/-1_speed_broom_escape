@@ -94,6 +94,15 @@ export const MessageType = {
    */
   SetIdentity: 'setIdentity',
   /**
+   * Server -> client: "from now on, this browser's guest id is THIS".
+   *
+   * Sent when the browser's old guest profile has been MIGRATED into an
+   * account. That copy is kept as a recovery copy and never restored, so a new
+   * guest session needs a new id - or its progress would be saved over the
+   * recovery copy, and never loaded again either.
+   */
+  GuestId: 'guestId',
+  /**
    * Client -> server: "this is what my Bloxity avatar looks like".
    *
    * The one message whose content the server stores rather than judges, and it

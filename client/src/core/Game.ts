@@ -140,6 +140,9 @@ export class Game {
   /** Authoritative respawn waiting for the death animation to finish. */
   private pendingRespawn: RespawnMessage | null = null;
 
+  /** Bottom-centre container the Speed/Level bar and flight meter stack in. */
+  private readonly bottomDock: HTMLDivElement;
+
   /** Last replicated owned-broom mask, so the stands only relight on change. */
   private lastOwnedBrooms = -1;
 
@@ -147,8 +150,14 @@ export class Game {
     injectHudStyles();
     this.renderer = new RendererManager(container);
     this.remotePlayers = new RemotePlayerManager(this.sceneManager.scene);
-    this.hud = new SpeedHud(container);
-    this.flight = new FlightMeter(container);
+    // The bottom dock: anchored bottom-centre by the HUD stylesheet, and the
+    // two bars stack inside it in DOM order - Speed/Level first, the flight
+    // meter last, so the meter is always the lowest thing on screen.
+    this.bottomDock = document.createElement('div');
+    this.bottomDock.className = 'aoe-dock-bottom';
+    container.appendChild(this.bottomDock);
+    this.hud = new SpeedHud(this.bottomDock);
+    this.flight = new FlightMeter(this.bottomDock);
     this.pops = new SpeedPopups(container);
     this.wins = new WinsCounter(container);
     this.winFlight = new WinFlight(container);
@@ -744,6 +753,7 @@ export class Game {
     this.stop();
     this.hud.dispose();
     this.flight.dispose();
+    this.bottomDock.remove();
     this.pops.dispose();
     this.wins.dispose();
     this.winFlight.dispose();

@@ -4,25 +4,35 @@ import { PALETTE, WORLD_FOG } from '../config/worldVisuals.js';
 /**
  * Bounce colour off the ground.
  *
- * Cold stone with a hint of the lava below it, not the previous game's bright
- * green meadow: the hemisphere light fills every downward-facing surface with
- * this, so a stale value tints the underside of the entire dungeon.
+ * A warm pale lavender - the colour the vault's flagstones and the lit
+ * masonry would throw back. The hemisphere light fills every downward-facing
+ * surface with this, so it is what the undersides of the rune slabs, the
+ * bars and the broom are painted in: a dark value here is exactly what made
+ * the old dungeon read as a pit.
  */
-const GROUND_BOUNCE = 0x3a3346;
+const GROUND_BOUNCE = 0xc8b8f0;
+
+/** The sky half of the hemisphere fill: a cool, bright blue-white. */
+const SKY_FILL = 0xe4ecff;
+
+/** The key light: a warm white, so lit faces read as sunny rather than grey. */
+const KEY_COLOUR = 0xfff3e0;
 
 /**
  * The scene root and the base lighting rig.
  *
  * Soft and simple on purpose. The art direction is flat toy-brick, so the
  * lighting exists to separate one face of a box from another and to lay a
- * shadow under each mount - not to model anything. A hemisphere fill, a low
+ * shadow under each mount - not to model anything. A hemisphere fill, an
  * ambient and a single key light is the whole rig.
  *
- * It is a DUNGEON, so the key is dimmer and the fill is cold, and what carries
- * the room instead is emission: the lava, the braziers, the torches and the
- * rune slabs are all lit materials. That is why the ambient is not simply
- * turned down to match the theme - the dark would swallow every unlit box in
- * the world, and most of the world is unlit boxes.
+ * It is BRIGHT: the fill is strong enough that no face in the world goes
+ * near black, which keeps every shadow soft - a shadow is a darker shade of
+ * the colour it falls on, never a hole in the floor. The magic on top of that
+ * (lava, braziers, crystals, rune slabs, halos) is carried by emissive and
+ * unlit materials rather than by extra lights, because every real light is a
+ * per-pixel cost on every material in the world and this has to run on a
+ * phone.
  */
 export class SceneManager {
   readonly scene = new Scene();
@@ -34,13 +44,13 @@ export class SceneManager {
     this.scene.fog = new Fog(PALETTE.fog, WORLD_FOG.near, WORLD_FOG.far);
     this.setBackground();
 
-    const hemi = new HemisphereLight(PALETTE.sky, GROUND_BOUNCE, 1.15);
+    const hemi = new HemisphereLight(SKY_FILL, GROUND_BOUNCE, 1.05);
     hemi.position.set(0, 60, 0);
     this.scene.add(hemi);
 
-    this.scene.add(new AmbientLight(0xffffff, 0.42));
+    this.scene.add(new AmbientLight(0xffffff, 0.5));
 
-    this.sun = new DirectionalLight(0xffffff, 1.75);
+    this.sun = new DirectionalLight(KEY_COLOUR, 1.45);
     this.sun.position.set(34, 62, -24);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(1024, 1024);

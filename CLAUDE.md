@@ -269,7 +269,7 @@ This is the single most important design fact in the repo.
   of each name.
 - **Not one image file is used for the WORLD.** Every world texture — the
   flagstones, the masonry, the timber, the rune slabs, the gold pads, the belts
-  and the cavern dark — is drawn on a canvas at runtime by `WorldTextures`.
+  and the void — is drawn on a canvas at runtime by `WorldTextures`.
 - **Every static file lives in the repo-level `assets/`**, which Vite publishes
   as the web ROOT, so `assets/ui/trophy.png` is served at `/ui/trophy.png`.
 - The only images in the build are the rider FBX, its texture, and the **three**
@@ -347,8 +347,9 @@ Procedural, and required for the finished game — not a placeholder.
 - **Lethal MOVING things are LAVENDER, all of them.** A colour is a promise.
   Spikes are the one deliberate exception — a static field painted in the
   colour reserved for things that chase would make every moving hazard harder
-  to pick out — so they get a bright TIP on a dark shaft instead, which is the
-  half that has to be visible from directly above.
+  to pick out — so they get a GLOWING GOLD TIP on a steel shaft instead, which
+  is the half that has to be visible from directly above. The tip cone must
+  SHEATHE the shaft's upper half; a smaller one hides inside it.
 - **Violet means "a thing the magic made"**, and it is shared by the rune
   slabs, the flight meter, the broom glows, the wall runes and the guardian's
   eyes — so a player learns in stage one that violet is where they land.
@@ -360,7 +361,7 @@ Procedural, and required for the finished game — not a placeholder.
   offset is a FRACTION of it through `lane()`.
 - Places that open out are declared in **`WIDE_AREAS`**, and there is exactly
   one list.
-- The pink— now dark — walls are **scenery**. What holds the player in is
+- The walls are **scenery**. What holds the player in is
   `WorldCollision.clampToBounds`, applied after the substep has integrated.
 - Solids are bucketed by Z.
 - `texturedBox` scales UVs to WORLD size.
@@ -380,6 +381,47 @@ Procedural, and required for the finished game — not a placeholder.
   the raised rubble is out of its reach, which is what makes that stage reward
   arriving with a full meter.
 
+## The look
+
+**Bright Roblox game + colourful magical dungeon.** Not gothic, not horror.
+
+- Every colour is in `client/src/config/worldVisuals.ts`. Surfaces are LIGHT —
+  pale blue-violet stone, warm timber, gold trim — and dark values survive only
+  as ACCENTS a player reads BY their darkness: the treadmill belts, a locked
+  machine's frame, the scoreboard panels, the guardian. Do not reintroduce a
+  near-black surface.
+- **Six stage THEMES** (`THEMES`, `STAGE_THEMES`): enchanted stone, crystal
+  cave, lava chamber, sky bridges, rune tower, floating isles, plus the vault.
+  A theme is a PLACE and is reused, not one per stage. It colours ONLY the
+  surfaces a stage is mostly made of — floor, stone, pillars, roof, walls and
+  the wall cap — plus its decorative glow. Rune slabs, win pads, ice, timber,
+  ruins, hazards and spikes keep ONE colour game-wide, because those colours
+  are promises. A rune-tower floor leans BLUE for the same reason: a violet
+  floor would hide the slabs.
+- `themeAt(z)` decides the theme; walls are split at every stage start so each
+  stage's walls wear their own.
+- The roof is the walls' masonry, SELF-LIT: it is only ever seen from below,
+  where the sun never reaches.
+- **Lighting is a hemisphere, an ambient and one sun — no other real lights.**
+  A light is a per-pixel cost on every material in the world. Everything that
+  should look lit (lava, flames, crystals, rune slabs, win pads, wall caps,
+  hazards, spike tips) is emissive or unlit instead. Shadows stay SOFT because
+  the fill is strong, never because shadows are off.
+- `DungeonDressing` is PURE SCENERY: banners and violet wall runes on the wall
+  FACES (never more than 0.35 into the corridor), crystal clusters on the wall
+  TOPS, carpets and the spawn rings flat on the vault floor, the entrance
+  pilasters on the shoulder wall's face. Nothing it draws stands in the air a
+  broom flies through looking like something to land on or hit, and nothing is
+  in `COURSE_SOLIDS`. The drifting motes are the one thing in the air, and they
+  are too small and too obviously light to be mistaken for a solid.
+- Halos and motes are ONE Points draw each, additive, with a custom shader that
+  FADES them with distance: an additive point tinted toward the fog colour
+  would brighten the distance instead of disappearing into it.
+- The vault is told apart by colour first: PURPLE and gold for the broom shop on
+  the player's LEFT, CYAN for the training hall on the RIGHT, a royal-blue
+  aisle from the spawn rings to the gold-and-cyan entrance. The back wall stays
+  EMPTY for the boards.
+
 ## Architecture rules
 
 - **No god files.** Logic belongs in its module: `net`, `player`, `input`,
@@ -392,7 +434,7 @@ Procedural, and required for the finished game — not a placeholder.
 - **Wins move in exactly one place**: `Wallet`.
 - **Speed is granted in exactly one place**: `SpeedService`.
 - **Deaths are decided on the server tick.**
-- Persistence sits behind `PersistenceAdapter`.
+- Persistence sits behind `Storage` (`server/src/persistence/`); see "Persistence".
 - Only the DERIVING facts are persisted (Speed, Wins, owned brooms, rebirths,
   best stage). Level, movement speed, flight capacity and the equipped broom
   are recomputed on load through the same formulas a live session uses.
@@ -404,6 +446,28 @@ the left rail, **Speed** and **Level** along the bottom, and the **FLIGHT
 METER** beneath them at the very bottom edge.
 
 - `hudStyles.ts` owns the one stylesheet and the icons.
+- **The HUD is sized by ONE unit, `--u`**, defined in `hudStyles.ts`:
+  `clamp(0.62px, min(0.1vw, 0.13dvh), 1.2px)` — 1px at the 770px-tall design
+  size, following whichever viewport dimension is tighter, clamped at both
+  ends. Every HUD size (tiles, borders, fonts, text-outline offsets, gaps,
+  margins) is `N * var(--u)`, so the HUD scales and re-lays as ONE design on
+  every resize with no script. Text gets a small `max(Npx, …)` floor for
+  readability. **Never** add a per-device or `touch-mode` size override to
+  one control — fix the unit. That is exactly the bug that made the rail
+  fill a short landscape screen.
+- **Anchors:** the rail is LEFT + VERTICAL CENTRE. The Speed/Level bar and
+  the flight meter live in ONE bottom-centre flex column, `.aoe-dock-bottom`
+  (built in `Game`), Speed first and the meter last — so they stack by
+  layout and can never overlap, and neither positions itself. The dock is
+  capped at 720u and keeps clear of the rail's footprint (`--hud-rail-reserve`)
+  on BOTH sides so it stays centred.
+- **The thumb controls publish what they occupy** (`TouchControls.ts`):
+  `--hud-touch-clear` lifts the dock over them in portrait, and
+  `--hud-touch-side` narrows it to fit between them in landscape — a hard
+  limit that wins over the dock's 240px floor. The resting stick sits just
+  right of the rail's footprint, so the two cannot collide on a short screen.
+  The thumb controls themselves stay in `vmin` with pixel bounds: a thumb is a
+  physical size.
 - Everything shown is replicated server state, with **one deliberate
   exception**: the flight meter is drawn from the CLIENT's prediction. The
   server owns the meter and reconciles it twenty times a second, but this bar
@@ -473,8 +537,82 @@ file in this build.
   not a second one kept beside it. That is what makes the room limit and the
   empty-room rule checkable from outside the process, and it is what
   `verify:capacity` asserts against.
-- Profiles are a JSON file. On an ephemeral filesystem a redeploy wipes
-  progression unless `BROOM_DATA_DIR` points at a mounted volume.
+- **Progress persists on Legion.** Legion injects `MONGODB_URI` and the
+  server stores profiles and grants there; the JSON store is the dev fallback.
+  Nothing may claim progress resets on redeploy or scale-to-zero.
+- **This file owns shutdown**, not Colyseus: the `Server` is built with
+  `gracefullyShutdown: false`, because Colyseus' own SIGTERM handler exits in
+  its `finally` before the saves it just queued have landed. The order is
+  `gracefullyShutdown(false)` (disposes rooms, queues saves) -> `storage.flush`
+  -> `storage.close` -> exit.
+
+## Persistence
+
+`server/src/persistence/`. One variable picks the store: `MONGODB_URI` set ->
+`MongoStorage`; unset -> `JsonStorage` in `BROOM_DATA_DIR`. There is no other
+switch, and there are NO test switches in production code.
+
+- **Per-key contract**: `get` / `put` / `insertIfAbsent` / `loadAll` /
+  `flush`. `get` READS STORAGE and throws `StorageUnavailableError` when it
+  cannot; it never answers "no profile" for "could not ask".
+- **A profile is read at JOIN**, in `onAuth`, never from a boot cache: another
+  pod may have written it since. `ProfileStore` is a LEADERBOARD cache only,
+  refreshed every minute, newer `updatedAt` winning.
+- **A failed read REFUSES the join** (`4503`). Admitting a blank profile would
+  save a blank over the real one.
+- **Writes never drop.** The latest snapshot per key is queued and written with
+  an idempotent `updateOne($set, upsert)`, retried with backoff for ever.
+  Nothing is ever `$unset` — this game has no field a session may clear; if
+  one is added, `$unset` exactly that field and nothing else. Unknown fields
+  are preserved, and the JSON store's loader keeps every field it reads.
+- **The server boots with the database down**: `open` never throws, `/health`
+  keeps answering, joins are refused until it is back.
+- A legacy `profiles.json` in `BROOM_DATA_DIR` is imported into Mongo on EVERY
+  boot with `$setOnInsert`, so it can never overwrite newer progress.
+- The JSON store writes temp -> fsync -> rename, recovers a parseable leftover
+  `.tmp`, and MOVES a corrupt file aside (`<file>.corrupt-<time>`) — never
+  overwrites it.
+- The Mongo driver is 6.x and must stay hoisted to the root `node_modules`
+  (the Docker runtime copies only that tree).
+
+**Keys** (`server/src/progression/Profiles.ts`)
+
+- An account is `bloxity:<accountId>`, and the account id comes ONLY from
+  Bloxity's verify reply. A guest is the id the browser keeps
+  (`broomobby.playerId`). A browser id with the reserved `bloxity:` prefix is
+  REJECTED at the door (`4003`).
+
+**First login (`resolveAccount`)**
+
+- The account WINS. If it already has progress, it is loaded and the guest is
+  left alone.
+- Otherwise the guest's progress — the LIVE state if the guest is mid-session
+  — is `insertIfAbsent`-ed as the account with `migratedFrom`. Only after that
+  insert succeeds is the guest marked `migratedTo`.
+- A `migratedTo` guest is never restored, migrated again or ranked; the browser
+  holding it is issued a fresh guest id (`GuestId` message).
+- No empty migration: a guest with no progress migrates nothing.
+- Losing the insert race to another pod means LOAD the winner, not retry.
+
+**Signing in or out mid-session (`SetIdentity`)**
+
+- Handled on the live session, one at a time; only the NEWEST request counts
+  and later ones queue behind a switch in flight. The cooldown delays, it never
+  drops.
+- Autosave is blocked for the switch. The LEFT profile is saved from live
+  state, the new one resolved and applied, `onJoin`'s initialisation re-run in
+  the same order, grants re-applied, the player placed at spawn, and saved.
+- A storage failure mid-switch leaves the player where they were.
+
+**Bux grants — exactly once, across pods and restarts**
+
+- A grant is stored with the transaction id as its unique key (`bux_grants`
+  in Mongo, `grants.json` otherwise). The webhook answers 200 only once it is
+  DURABLY recorded; 503 if storage cannot, so Bloxity refunds.
+- A room CLAIMS a grant, skips it if the profile's `appliedGrants` already
+  holds it, applies it, writes the profile durably, and only then marks the
+  grant applied. A claim abandoned by a dead pod is reclaimable after
+  `GRANT_CLAIM_TIMEOUT_MS`, and `appliedGrants` stops a double payment.
 
 ## Bloxity
 
@@ -498,12 +636,21 @@ The cross-game portal: login, avatars, friends, synced settings and Bux.
   options verbatim, and since `getFriends()` hands out account ids, any player
   could join as a friend and collect the Wins that friend had just paid for.
   `verify:identity` replays exactly that attack against a running server.
-- Verification is in `onAuth`, so a player is admitted already bound, and it
-  **fails closed but never refuses**: a bad token, a Bloxity outage or a
-  timeout all admit a GUEST. The game is fully playable signed out, and a
-  Bloxity incident must not become an incident of this game. Positive answers
-  are cached briefly; `SetIdentity` is rate limited and a stale answer is
-  discarded if a newer one was sent meanwhile.
+- The client sends the TOKEN, never an account id, and dedupes: a token
+  already sent is not sent again.
+- Verification is in `onAuth` and has **three outcomes**, and it FAILS CLOSED:
+  only a 2xx carrying a valid string `_id` is `verified`.
+  - `verified` — bound to `bloxity:<id>`. Cached by the token's SHA-256 for
+    at most five minutes and never past the token's own `exp`.
+  - `rejected` (any other 4xx) — a guest. Cached ~30 s.
+  - `unavailable` (5xx, 429, 408, timeout, network, a 2xx without an id) — a
+    guest FOR NOW, re-verified on a backoff (5 s -> 60 s) and upgraded in place
+    when Bloxity answers. Never cached, and never a permanent demotion.
+- **The Bloxity API host is a CONSTANT** (`VERIFY_URL` in
+  `BloxityIdentity.ts`), not an env var: a configurable verifier is one an
+  attacker can point at a server that says yes.
+- `JWT_SECRET`, which Legion injects, is the GAME's own secret. It is NOT for
+  verifying portal tokens locally — always ask Bloxity.
 - `BLOXITY_GAME_SLUG` lives in `shared` because both halves must agree on it:
   the client inits the SDK with it and the server verifies tokens against it.
 - The webhook is `POST /bloxity/bux`, verified against
@@ -513,7 +660,9 @@ The cross-game portal: login, avatars, friends, synced settings and Bux.
   build cannot fulfil**, so the player gets their Bux back. It used to answer
   200 there, which kept the Bux and granted nothing. An unknown SKU is refused
   before its transaction is marked seen, so a retry after a deploy that adds
-  it is honoured. Fulfilment QUEUES rather than writes.
+  it is honoured. Fulfilment is DURABLE: see "Bux grants" under Persistence.
+- **A Bux grant is bound to the account Bloxity names in the webhook**, never
+  to anything a browser said.
 - **Every SKU the in-game shop sells must be in `SKU_WINS`**, and
   `verify:bloxity` fails the build otherwise. The shop once listed
   `speed_boost_1h`, which nothing granted.
@@ -536,6 +685,11 @@ Do not claim something works without running it.
   requirement, the roof, the broom roster, the flight constants, the treadmill
   tiers), the hard-end barrier, and the server's reward/purchase/flight
   authority INCLUDING the rejection paths.
+- `npm run verify:persistence` builds the server and runs it for real with
+  ONLY Bloxity's verify URL stubbed (`scripts/persistence-stub.mjs`, preloaded
+  with `node --import`). JSON store always; MongoDB with `MONGOD_BIN` (own
+  mongod, outage tests) or `MONGODB_URI` (**wiped**). Not part of `verify`.
+  On Windows it SIGKILLs servers, so it waits for writes before every kill.
 - `npm run verify:capacity` needs a RUNNING server, which is why it is not part
   of `verify`. It asserts all three limits: no room over 15, the overflow
   routed rather than turned away, and every room closed once empty.
@@ -595,8 +749,12 @@ simulation by hand to test physics; do not expect the server to follow.
 - An orbiting hazard reaches `|centre| + radius + ball`, and that total has to
   fit the corridor AT ITS OWN Z. `verify-course` checks it.
 - The world has a REAL bottom: a pit floor under everything.
-- The "sky" is a gradient dome plus banks of cave mist — real geometry merged
-  into two meshes.
+- The sky is a gradient dome plus blocky clouds — real geometry. The dome
+  FOLLOWS the camera and the cloud field is a TILE repeated along the run
+  (`Sky.follow`, hooked on the dome's own draw). The course is ~12,000 units
+  long; a dome fixed at the origin left every stage past the fifth under a flat
+  background colour, because a back-faced sphere seen from outside draws
+  nothing.
 
 ## Current milestone
 

@@ -1,172 +1,194 @@
+import { createHash } from 'node:crypto';
 import { serverConfig } from '../config/serverConfig.js';
 import { logger } from '../util/logger.js';
 
 const SCOPE = 'identity';
 
 /**
- * Longest token this server will send anywhere.
+ * Where Bloxity verifies a game token. A CONSTANT, not configuration.
  *
- * A Bloxity JWT is a few hundred characters. The cap exists so a client cannot
- * make this server forward a megabyte of garbage to a third party on its behalf.
+ * Exactly the call the official SDK makes to check its own token
+ * (sdk.bloxity.io/legion-sdk.js, `refreshUserFromApi`): POST, the token as a
+ * bearer, `{ gameSlug }` as the body. It is the one outbound call that decides
+ * whose progress a session gets, and an environment variable that could point
+ * it somewhere else would be an environment variable that decides that.
+ *
+ * (A test replaces `fetch` itself, with a module preloaded into the test
+ * server - see scripts/persistence-stub.mjs. Nothing here knows about it.)
  */
+const VERIFY_URL = 'https://api.bloxity.io/v1/auth/game-token/verify';
+
+/** Longest token this server will send anywhere. A Bloxity JWT is a few hundred characters. */
 const MAX_TOKEN_LENGTH = 4096;
 
-/** How long a verification may take before the player is admitted as a guest. */
+/** How long a verification may take. Well inside the 15-second seat reservation. */
 const VERIFY_TIMEOUT_MS = 5000;
 
-/**
- * How long a token that verified stays trusted without asking again.
- *
- * Short on purpose. A player who joins, leaves and rejoins inside it costs one
- * call rather than three, and a token that Bloxity revokes stops working here
- * within minutes rather than for the life of the process.
- */
-const CACHE_MS = 5 * 60 * 1000;
+/** Longest a VERIFIED answer is trusted without asking again (and never past the token's exp). */
+const VERIFIED_TTL_MS = 5 * 60 * 1000;
 
-/** Most tokens remembered at once, so the cache cannot grow without bound. */
-const CACHE_LIMIT = 2000;
+/** How long a REJECTED token is remembered, so a replayed forgery is not a request each time. */
+const REJECTED_TTL_MS = 30 * 1000;
+
+const CACHE_LIMIT = 5000;
 
 /**
- * A plausible account id: short, and nothing but identifier characters.
- *
- * Deliberately NOT pinned to a 24-character ObjectId. Bloxity documents that
- * shape for ITEM ids, not for users, and a pattern stricter than the real ids
- * would quietly turn every signed-in player into a guest. What this has to
- * stop is an id that is not an id at all - it becomes a Map key and a log line.
+ * A plausible account id: short, identifier characters only. Deliberately not
+ * pinned to an ObjectId shape - Bloxity documents that for ITEM ids, not users,
+ * and a stricter pattern than the real ids would quietly demote every player.
  */
 const ACCOUNT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** The shape of the one call this module makes. Swappable for tests. */
-export type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
+/**
+ * What asking Bloxity produced. THREE outcomes, because two would be a lie:
+ *
+ *  - verified    - a 2xx carrying a valid string `_id`. The only one that binds.
+ *  - rejected    - Bloxity said no (401, 403, any other 4xx). Play as a guest.
+ *  - unavailable - Bloxity could not be asked (timeout, network, 5xx, 429, or a
+ *                  2xx that does not look like an answer). Play as a guest FOR
+ *                  NOW and ask again on a backoff. Never a permanent demotion:
+ *                  an outage must not quietly turn signed-in players into
+ *                  guests for the rest of their session.
+ */
+export type IdentityResult =
+  | { readonly status: 'verified'; readonly accountId: string }
+  | { readonly status: 'rejected' }
+  | { readonly status: 'unavailable' };
+
+const REJECTED: IdentityResult = { status: 'rejected' };
+const UNAVAILABLE: IdentityResult = { status: 'unavailable' };
 
 /**
- * Turns a player's Bloxity TOKEN into their Bloxity ACCOUNT ID - or refuses to.
+ * Turns a player's Bloxity TOKEN into their ACCOUNT ID - or refuses to.
  *
- * WHY THIS EXISTS. Bux purchases are fulfilled by a webhook addressed to an
- * account id, and the room hands a queued purchase to whichever session it
- * believes owns that account. It used to believe whatever id a client put in
- * its join options. An account id is not a secret - `getFriends()` returns
- * them - so any player could join claiming a friend's id and walk off with the
- * Wins that friend had just paid for.
- *
- * So the client now sends its JWT, and this asks Bloxity whose it is, with the
- * same request the SDK itself uses to check its own token:
- * `POST /v1/auth/game-token/verify` with the game slug, because Bloxity issues
- * game-scoped tokens and checks them against the game they were issued for.
- * The id this returns is the ONLY one the room ever binds.
- *
- * Three properties, all deliberate:
- *
- *  - It NEVER THROWS and never blocks for long. A Bloxity outage must not lock
- *    anyone out of a game they can play perfectly well signed out, so every
- *    failure - timeout, 5xx, bad JSON, no network - resolves to `null`, which
- *    the room reads as "play as a guest".
- *  - It FAILS CLOSED. Anything it cannot positively verify is `null`. There is
- *    no fallback that trusts the client's word, because that fallback would be
- *    exactly the hole this closes.
- *  - It is cached by token, briefly, so a reconnecting player is not a second
- *    round trip.
+ * The room never believes a client about who it is: it sends its token, this
+ * asks Bloxity whose it is, and only the id Bloxity answers with is bound. It
+ * FAILS CLOSED - nothing but a well-formed 2xx counts - and it never verifies a
+ * token locally: the `JWT_SECRET` Legion injects is this GAME's secret, not
+ * Bloxity's signing key, so a local check would prove nothing.
  */
 export class BloxityIdentity {
-  private readonly cache = new Map<string, { id: string; until: number }>();
+  /** Keyed by a SHA-256 of the token, so no token is held as a map key. */
+  private readonly cache = new Map<string, { result: IdentityResult; until: number }>();
+  private readonly inflight = new Map<string, Promise<IdentityResult>>();
 
-  /** Verifications in flight, so two joins with one token make one request. */
-  private readonly inflight = new Map<string, Promise<string | null>>();
+  constructor(private readonly gameSlug: string = serverConfig.bloxityGameSlug) {}
 
-  constructor(
-    private readonly fetcher: Fetcher = (url, init) => fetch(url, init),
-    private readonly apiBase: string = serverConfig.bloxityApiBase,
-    private readonly gameSlug: string = serverConfig.bloxityGameSlug,
-    private readonly timeoutMs: number = VERIFY_TIMEOUT_MS,
-  ) {}
-
-  /**
-   * The Bloxity account id this token belongs to, or null.
-   *
-   * Null means "treat this player as signed out" - it is never an error the
-   * caller has to handle.
-   */
-  async verify(token: unknown): Promise<string | null> {
-    if (typeof token !== 'string') return null;
+  async verify(token: unknown): Promise<IdentityResult> {
+    if (typeof token !== 'string') return REJECTED;
     const trimmed = token.trim();
-    if (!trimmed || trimmed.length > MAX_TOKEN_LENGTH) return null;
+    if (!trimmed || trimmed.length > MAX_TOKEN_LENGTH) return REJECTED;
 
-    const now = Date.now();
-    const hit = this.cache.get(trimmed);
-    if (hit && hit.until > now) return hit.id;
-    if (hit) this.cache.delete(trimmed);
+    const key = hashToken(trimmed);
+    const hit = this.cache.get(key);
+    if (hit && hit.until > Date.now()) return hit.result;
+    if (hit) this.cache.delete(key);
 
-    const pending = this.inflight.get(trimmed);
+    const pending = this.inflight.get(key);
     if (pending) return pending;
 
-    const request = this.ask(trimmed).finally(() => this.inflight.delete(trimmed));
-    this.inflight.set(trimmed, request);
+    const request = this.ask(trimmed, key).finally(() => this.inflight.delete(key));
+    this.inflight.set(key, request);
     return request;
   }
 
-  private async ask(token: string): Promise<string | null> {
+  private async ask(token: string, key: string): Promise<IdentityResult> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-
+    const timer = setTimeout(() => controller.abort(), VERIFY_TIMEOUT_MS);
+    let response: Response;
     try {
-      const response = await this.fetcher(`${this.apiBase}/v1/auth/game-token/verify`, {
+      // `fetch` looked up at CALL time, not captured at import.
+      response = await globalThis.fetch(VERIFY_URL, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ gameSlug: this.gameSlug }),
         signal: controller.signal,
       });
-
-      if (!response.ok) {
-        // 401 is the ordinary case - an expired or forged token - and is
-        // logged quietly. Anything else is Bloxity having a bad day.
-        if (response.status === 401) {
-          logger.info(SCOPE, 'a Bloxity token was rejected; admitting as a guest');
-        } else {
-          logger.warn(SCOPE, `Bloxity verify answered HTTP ${response.status}`);
-        }
-        return null;
-      }
-
-      // Parsed exactly as the SDK parses the same response: the user may be
-      // wrapped in `{ user }` or be the body itself.
-      const body = (await response.json()) as Record<string, unknown> | null;
-      const user =
-        body && typeof body === 'object' && body['user'] && typeof body['user'] === 'object'
-          ? (body['user'] as Record<string, unknown>)
-          : body;
-      const id = user?.['_id'];
-
-      if (typeof id !== 'string' || !ACCOUNT_ID.test(id)) {
-        logger.warn(SCOPE, 'Bloxity verify answered 2xx without a usable account id');
-        return null;
-      }
-
-      this.remember(token, id);
-      return id;
     } catch (error) {
-      const reason =
+      clearTimeout(timer);
+      const why =
         error instanceof Error && error.name === 'AbortError'
-          ? `timed out after ${this.timeoutMs}ms`
+          ? `timed out after ${VERIFY_TIMEOUT_MS}ms`
           : String(error);
-      logger.warn(SCOPE, `could not verify a Bloxity token: ${reason}`);
-      return null;
+      logger.warn(SCOPE, `Bloxity could not be asked (${why}); guest for now, will retry`);
+      return UNAVAILABLE;
+    }
+
+    try {
+      if (response.status >= 500 || response.status === 429 || response.status === 408) {
+        logger.warn(SCOPE, `Bloxity answered HTTP ${response.status}; guest for now, will retry`);
+        return UNAVAILABLE;
+      }
+      if (!response.ok) {
+        logger.info(SCOPE, `a token was rejected (HTTP ${response.status}); playing as a guest`);
+        this.remember(key, REJECTED, Date.now() + REJECTED_TTL_MS);
+        return REJECTED;
+      }
+
+      // Parsed exactly as the SDK parses the same reply: `{ user }` or the user.
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch {
+        logger.warn(SCOPE, 'Bloxity answered 2xx with a body that is not JSON; will retry');
+        return UNAVAILABLE;
+      }
+      const record = body && typeof body === 'object' ? (body as Record<string, unknown>) : null;
+      const user =
+        record && record['user'] && typeof record['user'] === 'object'
+          ? (record['user'] as Record<string, unknown>)
+          : record;
+      const id = user?.['_id'];
+      if (typeof id !== 'string' || !ACCOUNT_ID.test(id)) {
+        // A 2xx that is not an answer is not a "no" either: never verified,
+        // but not a verdict against the player. Asked again later.
+        logger.warn(SCOPE, 'Bloxity answered 2xx without a usable account id; will retry');
+        return UNAVAILABLE;
+      }
+
+      const result: IdentityResult = { status: 'verified', accountId: id };
+      // Trusted for a few minutes, and never past the token's own expiry.
+      const exp = tokenExpiry(token);
+      const until = Math.min(Date.now() + VERIFIED_TTL_MS, exp ?? Number.POSITIVE_INFINITY);
+      if (until > Date.now()) this.remember(key, result, until);
+      return result;
     } finally {
       clearTimeout(timer);
     }
   }
 
-  private remember(token: string, id: string): void {
+  private remember(key: string, result: IdentityResult, until: number): void {
     if (this.cache.size >= CACHE_LIMIT) {
-      // Oldest first: a Map iterates in insertion order.
       const oldest = this.cache.keys().next().value;
       if (oldest !== undefined) this.cache.delete(oldest);
     }
-    this.cache.set(token, { id, until: Date.now() + CACHE_MS });
+    this.cache.set(key, { result, until });
   }
 }
+
+const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
+
+/**
+ * The token's `exp`, in ms, or null.
+ *
+ * READ, not verified - it only ever SHORTENS how long a verified answer is
+ * trusted, which is safe to take from an unverified token. The SDK reads it
+ * the same way (`isTokenExpired`), and treats a token with no `exp` as valid.
+ */
+const tokenExpiry = (token: string): number | null => {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1] as string, 'base64url').toString('utf8')) as {
+      exp?: unknown;
+    };
+    return typeof payload.exp === 'number' && Number.isFinite(payload.exp)
+      ? payload.exp * 1000
+      : null;
+  } catch {
+    return null;
+  }
+};
 
 /** Process-wide, so every room shares one cache and one set of requests. */
 export const bloxityIdentity = new BloxityIdentity();

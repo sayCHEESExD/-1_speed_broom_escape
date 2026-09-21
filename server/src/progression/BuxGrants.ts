@@ -1,3 +1,4 @@
+import { storage } from '../persistence/index.js';
 import { logger } from '../util/logger.js';
 
 const SCOPE = 'bux';
@@ -31,89 +32,64 @@ export const SKU_WINS: Readonly<Record<string, number>> = {
 
 /** How `record` resolved a webhook. The webhook's HTTP status follows from it. */
 export type RecordOutcome =
-  /** Queued for its player. Answer 2xx. */
+  /** Durably recorded for its account. Answer 2xx. */
   | 'queued'
-  /** Already fulfilled by an earlier delivery. Answer 2xx - a retry must not refund. */
+  /** Already recorded by an earlier delivery. Answer 2xx - a retry must not refund. */
   | 'duplicate'
   /** Nothing in this build can fulfil it. Answer non-2xx, so Bloxity refunds. */
   | 'unknown-sku'
   /** Missing an account or a transaction. Answer non-2xx. */
-  | 'malformed';
-
-/** One purchase, waiting for its player to be somewhere it can be applied. */
-export interface PendingGrant {
-  readonly transactionId: string;
-  readonly sku: string;
-  readonly wins: number;
-}
+  | 'malformed'
+  /** Storage could not record it. Answer non-2xx - unrecorded must be refunded, not lost. */
+  | 'unavailable';
 
 /**
  * Purchases that have been paid for and not yet handed over.
  *
- * A QUEUE rather than a direct write, and that is the whole design. The
- * webhook arrives on the HTTP thread at a moment of Bloxity's choosing; the
- * player may be live in a room with their Wins held in replicated state that
- * the autosave will write over the stored profile a few seconds later.
- * Crediting the stored profile directly would therefore be a credit that
- * vanishes on the next save. So the webhook only ever RECORDS, and the room
- * applies what is waiting - on join, and on a slow timer for a player who was
- * already in when they bought something.
+ * The webhook only ever RECORDS - the room applies what is waiting, on join
+ * and on a slow poll for a player already in when they bought something.
+ * Crediting the stored profile directly from the webhook would be a credit
+ * the live session's next autosave writes straight back over.
  *
- * Transaction ids are remembered so a webhook Bloxity retries - which it will,
- * if this server was slow to answer - pays out once.
+ * RECORDED DURABLY, in the same database as the profiles (the JSON store
+ * without `MONGODB_URI`). This used to be an in-memory map, which on Legion
+ * meant a purchase lived only in the pod the webhook happened to land on - and
+ * vanished with it at the next idle scale-to-zero. Now:
+ *
+ *  - the transaction id is a UNIQUE key, so a webhook retry is recognised on
+ *    any pod, after any restart, and pays out once;
+ *  - grants are drained only against an account Bloxity itself VERIFIED from
+ *    the player's token, never against an id a browser supplied;
+ *  - draining CLAIMS each grant atomically, so two pods holding sessions for
+ *    one account cannot both apply it (see `GrantStorage`);
+ *  - the webhook answers 2xx only once the grant is durably recorded. If
+ *    storage is down it answers 503, and Bloxity refunds rather than the
+ *    purchase silently evaporating.
  */
 class BuxGrants {
-  /** Queued grants, by Bloxity user id. */
-  private readonly pending = new Map<string, PendingGrant[]>();
-  /** Every transaction already accepted, so a retry is not a second payout. */
-  private readonly seen = new Set<string>();
+  async record(accountId: string, transactionId: string, sku: string): Promise<RecordOutcome> {
+    if (!accountId || !transactionId) return 'malformed';
 
-  /**
-   * Record a paid purchase.
-   *
-   * The ORDER of the checks is load-bearing. A duplicate is recognised first,
-   * so a retry of something already fulfilled is acknowledged rather than
-   * refunded. An unknown SKU is refused BEFORE the transaction is marked seen,
-   * so nothing about it is remembered as fulfilled - if Bloxity retries after a
-   * deploy that added the SKU, that retry is honoured.
-   */
-  record(bloxityId: string, transactionId: string, sku: string): RecordOutcome {
-    if (!bloxityId || !transactionId) return 'malformed';
-    if (this.seen.has(transactionId)) {
-      logger.info(SCOPE, `duplicate webhook for ${transactionId}, ignored`);
-      return 'duplicate';
-    }
-
+    // Checked BEFORE anything is recorded, so a retry after a deploy that adds
+    // the SKU is honoured rather than dismissed as a duplicate.
     const wins = SKU_WINS[sku];
     if (wins === undefined || wins <= 0) {
       logger.warn(SCOPE, `unknown sku "${sku}" [${transactionId}] - refusing so it is refunded`);
       return 'unknown-sku';
     }
 
-    this.seen.add(transactionId);
-
-    const queue = this.pending.get(bloxityId) ?? [];
-    queue.push({ transactionId, sku, wins });
-    this.pending.set(bloxityId, queue);
-    logger.info(
-      SCOPE,
-      `queued ${sku} (+${wins} wins) for ${bloxityId} [${transactionId}]`,
-    );
-    return 'queued';
-  }
-
-  /** Take everything waiting for a player. Empties the queue. */
-  drain(bloxityId: string): PendingGrant[] {
-    if (!bloxityId) return [];
-    const queue = this.pending.get(bloxityId);
-    if (!queue || queue.length === 0) return [];
-    this.pending.delete(bloxityId);
-    return queue;
-  }
-
-  /** True if anyone at all is owed something, so the tick can skip the work. */
-  get hasPending(): boolean {
-    return this.pending.size > 0;
+    try {
+      const outcome = await storage.recordGrant({ transactionId, accountId, sku, wins });
+      if (outcome === 'duplicate') {
+        logger.info(SCOPE, `duplicate webhook for ${transactionId}, already recorded`);
+        return 'duplicate';
+      }
+      logger.info(SCOPE, `recorded ${sku} (+${wins} wins) for account ${accountId} [${transactionId}]`);
+      return 'queued';
+    } catch (error) {
+      logger.error(SCOPE, `could not record ${transactionId}; answering non-2xx so it is refused, not lost`, error);
+      return 'unavailable';
+    }
   }
 }
 

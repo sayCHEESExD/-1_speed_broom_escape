@@ -16,9 +16,52 @@ export const injectHudStyles = (): void => {
   const style = document.createElement('style');
   style.textContent = `
 :root {
-  /* ONE number scales the whole left rail, so the column grows together. */
-  --aoe-rail: 78px;
+  /*
+   * THE HUD UNIT. Every size on the HUD is a multiple of it.
+   *
+   * 1u is 1px on a window 770px tall (the size the HUD was designed at) or
+   * 1000px wide, whichever is TIGHTER. It follows the limiting dimension, so
+   * a short landscape phone and a narrow portrait one both get a HUD that
+   * fits them, and a
+   * resized browser window re-lays the whole HUD on the next frame with no
+   * script involved. It is clamped at both ends: it never shrinks past the
+   * point where a tile stops being a comfortable tap target, and it never
+   * grows past the point where a 4K monitor gets billboard buttons.
+   *
+   * Because every element is sized from this ONE number, the HUD is the same
+   * design at every size - it scales as a whole rather than element by
+   * element - and a fix to how the HUD scales belongs here, never in a
+   * per-device rule on one control.
+   */
+  --u: clamp(0.62px, min(0.1vw, 0.13vh), 1.2px);
+
+  /* Safe areas (notches, home indicators), shared with the touch controls. */
+  --aoe-safe-t: env(safe-area-inset-top, 0px);
+  --aoe-safe-r: env(safe-area-inset-right, 0px);
+  --aoe-safe-b: env(safe-area-inset-bottom, 0px);
+  --aoe-safe-l: env(safe-area-inset-left, 0px);
+
+  /* The margin every anchored element keeps from the screen edge. */
+  --hud-edge: max(8px, calc(12 * var(--u)));
+
+  /* The rail's tile size - the column scales together because this is one number. */
+  --aoe-rail: calc(78 * var(--u));
+
+  /*
+   * The width the left rail claims, MIRRORED on the right when the bottom
+   * dock is sized, so the bars stay centred and never slide under the rail.
+   */
+  --hud-rail-reserve: calc(var(--aoe-safe-l) + var(--hud-edge) + var(--aoe-rail) + 14 * var(--u));
+
+  /* The dark rim on HUD type, in the same unit so it thins with the text. */
+  --hud-o: max(1.5px, calc(3 * var(--u)));
+  --hud-o2: max(1px, calc(2 * var(--u)));
+
   --aoe-ink: #12181f;
+}
+/* Dynamic viewport height where supported: a phone's toolbar comes and goes. */
+@supports (height: 1dvh) {
+  :root { --u: clamp(0.62px, min(0.1vw, 0.13dvh), 1.2px); }
 }
 
 .aoe-font {
@@ -33,29 +76,72 @@ export const injectHudStyles = (): void => {
 .aoe-outline {
   color: #fff;
   text-shadow:
-    3px 0 0 var(--aoe-ink), -3px 0 0 var(--aoe-ink),
-    0 3px 0 var(--aoe-ink), 0 -3px 0 var(--aoe-ink),
-    2px 2px 0 var(--aoe-ink), -2px 2px 0 var(--aoe-ink),
-    2px -2px 0 var(--aoe-ink), -2px -2px 0 var(--aoe-ink),
-    0 5px 9px rgba(0, 0, 0, 0.45);
+    var(--hud-o) 0 0 var(--aoe-ink), calc(-1 * var(--hud-o)) 0 0 var(--aoe-ink),
+    0 var(--hud-o) 0 var(--aoe-ink), 0 calc(-1 * var(--hud-o)) 0 var(--aoe-ink),
+    var(--hud-o2) var(--hud-o2) 0 var(--aoe-ink), calc(-1 * var(--hud-o2)) var(--hud-o2) 0 var(--aoe-ink),
+    var(--hud-o2) calc(-1 * var(--hud-o2)) 0 var(--aoe-ink),
+    calc(-1 * var(--hud-o2)) calc(-1 * var(--hud-o2)) 0 var(--aoe-ink),
+    0 calc(5 * var(--u)) calc(9 * var(--u)) rgba(0, 0, 0, 0.45);
+}
+
+/* ---- The bottom dock: Speed/Level over the flight meter -------------------
+ * BOTTOM + HORIZONTAL CENTRE, always. One flex column rather than two bars
+ * each positioned with a pixel offset guessed from the other's height: the
+ * stack is laid out by the browser, so the two bars can never overlap at any
+ * size, and the flight meter - watched during a crossing - is always the
+ * lower of the two, nearest the thumb.
+ *
+ * Width: up to 720u, and no wider than the room between the rail's footprint
+ * on the left and the same margin mirrored on the right - but not narrower
+ * than 240px for the RAIL's sake, since the rail is vertically centred and
+ * the dock can pass beneath it. The thumb controls are different: they share
+ * the bottom edge, so the room between them (landscape touch) is a HARD
+ * limit that wins over the 240px floor. It stays centred because every
+ * reserve is taken from both sides.
+ *
+ * The touch controls publish two variables: --hud-touch-clear lifts the dock
+ * over them when they fill the bottom edge (portrait), and --hud-touch-side
+ * narrows it to fit between them when there is room (landscape).
+ */
+.aoe-dock-bottom {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--aoe-safe-b) + var(--hud-edge) + var(--hud-touch-clear, 0px));
+  transform: translateX(-50%);
+  width: min(
+    max(
+      min(calc(720 * var(--u)), calc(100vw - 2 * var(--hud-rail-reserve))),
+      min(240px, calc(100vw - 2 * var(--hud-edge)))
+    ),
+    calc(100vw - 2 * var(--hud-touch-side, 0px))
+  );
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(10 * var(--u));
+  pointer-events: none;
+  user-select: none;
+  z-index: 20;
 }
 
 /* ---- Wins, upper centre ------------------------------------------------- */
 .aoe-wins {
   position: fixed;
-  top: max(10px, env(safe-area-inset-top, 0px));
+  top: calc(var(--aoe-safe-t) + var(--hud-edge));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: calc(10 * var(--u));
   pointer-events: none;
   user-select: none;
   z-index: 22;
 }
+/* A square box the supplied trophy is FITTED into (object-fit: contain), so
+ * its own aspect ratio is kept whatever the box. */
 .aoe-wins__icon {
-  width: clamp(32px, 3.6vw, 50px);
-  height: clamp(32px, 3.6vw, 50px);
+  width: max(26px, calc(44 * var(--u)));
+  height: max(26px, calc(44 * var(--u)));
 }
 .aoe-wins__icon .aoe-icon {
   width: 100%;
@@ -64,14 +150,16 @@ export const injectHudStyles = (): void => {
   filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
 }
 .aoe-wins__value {
-  font-size: clamp(22px, 3vw, 40px);
+  font-size: max(20px, calc(36 * var(--u)));
   line-height: 1;
   /* Orange, as the reference art has it - the one warm figure on screen. */
   color: #ff9d1f;
   text-shadow:
-    3px 0 0 #fff, -3px 0 0 #fff, 0 3px 0 #fff, 0 -3px 0 #fff,
-    2px 2px 0 #fff, -2px 2px 0 #fff, 2px -2px 0 #fff, -2px -2px 0 #fff,
-    0 6px 10px rgba(0, 0, 0, 0.5);
+    var(--hud-o) 0 0 #fff, calc(-1 * var(--hud-o)) 0 0 #fff,
+    0 var(--hud-o) 0 #fff, 0 calc(-1 * var(--hud-o)) 0 #fff,
+    var(--hud-o2) var(--hud-o2) 0 #fff, calc(-1 * var(--hud-o2)) var(--hud-o2) 0 #fff,
+    var(--hud-o2) calc(-1 * var(--hud-o2)) 0 #fff, calc(-1 * var(--hud-o2)) calc(-1 * var(--hud-o2)) 0 #fff,
+    0 calc(6 * var(--u)) calc(10 * var(--u)) rgba(0, 0, 0, 0.5);
 }
 .aoe-wins--pop .aoe-wins__value { animation: aoe-pop 520ms ease-out; }
 @keyframes aoe-pop {
@@ -80,15 +168,20 @@ export const injectHudStyles = (): void => {
   100% { transform: scale(1); }
 }
 
-/* ---- Left rail ---------------------------------------------------------- */
+/* ---- Left rail ----------------------------------------------------------
+ * LEFT + VERTICAL CENTRE, always: the column is anchored at 50% of the
+ * viewport and centred on it, so it stays in the left-middle at every size and
+ * aspect ratio. Every tile, gap, border, key cap and badge is in the HUD unit,
+ * so the column scales and repositions as ONE group.
+ */
 .aoe-rail {
   position: fixed;
-  left: max(10px, env(safe-area-inset-left, 0px));
+  left: calc(var(--aoe-safe-l) + var(--hud-edge));
   top: 50%;
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: calc(14 * var(--u));
   z-index: 21;
   user-select: none;
 }
@@ -96,13 +189,13 @@ export const injectHudStyles = (): void => {
   position: relative;
   width: var(--aoe-rail);
   height: var(--aoe-rail);
-  border: 4px solid var(--aoe-ink);
-  border-radius: 20px;
+  border: max(2px, calc(4 * var(--u))) solid var(--aoe-ink);
+  border-radius: calc(20 * var(--u));
   display: grid;
   place-items: center;
   cursor: pointer;
   padding: 0;
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.38);
+  box-shadow: 0 calc(6 * var(--u)) calc(12 * var(--u)) rgba(0, 0, 0, 0.38);
   transition: transform 110ms ease;
 }
 .aoe-tile:hover { transform: scale(1.06); }
@@ -113,16 +206,16 @@ export const injectHudStyles = (): void => {
   object-fit: contain;
   /* The art carries its own outline, so it needs a drop shadow rather than a
    * stroke to lift it off the gradient behind it. */
-  filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(0 calc(3 * var(--u)) calc(3 * var(--u)) rgba(0, 0, 0, 0.35));
   pointer-events: none;
 }
 /* The label sits UNDER the tile, overlapping its bottom edge, as in the art. */
 .aoe-tile__label {
   position: absolute;
   left: 50%;
-  bottom: -9px;
+  bottom: calc(-9 * var(--u));
   transform: translateX(-50%);
-  font-size: clamp(11px, 1.15vw, 15px);
+  font-size: max(10px, calc(15 * var(--u)));
   white-space: nowrap;
   pointer-events: none;
 }
@@ -134,20 +227,22 @@ export const injectHudStyles = (): void => {
  */
 .aoe-tile__key {
   position: absolute;
-  left: -7px;
-  top: -7px;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 4px;
+  left: calc(-7 * var(--u));
+  top: calc(-7 * var(--u));
+  min-width: calc(22 * var(--u));
+  height: calc(22 * var(--u));
+  padding: 0 calc(4 * var(--u));
   box-sizing: border-box;
-  border: 3px solid var(--aoe-ink);
-  border-radius: 7px;
+  border: max(1.5px, calc(3 * var(--u))) solid var(--aoe-ink);
+  border-radius: calc(7 * var(--u));
   background: #ffffff;
   color: var(--aoe-ink);
-  font-size: 13px;
-  line-height: 16px;
-  text-align: center;
-  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.28);
+  font-size: calc(13 * var(--u));
+  /* Centred in whatever height the unit gives the cap, at any size. */
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  box-shadow: 0 calc(2 * var(--u)) 0 rgba(0, 0, 0, 0.28);
   pointer-events: none;
 }
 /* Touch has no keyboard, so the mobile layout keeps exactly what it had. */
@@ -156,20 +251,21 @@ body.aoe-touch-mode .aoe-tile__key { display: none; }
 /* The red "!" badge: something is available. */
 .aoe-tile__badge {
   position: absolute;
-  right: -8px;
-  bottom: -8px;
-  width: 24px;
-  height: 24px;
-  border: 3px solid var(--aoe-ink);
+  right: calc(-8 * var(--u));
+  bottom: calc(-8 * var(--u));
+  width: calc(24 * var(--u));
+  height: calc(24 * var(--u));
+  box-sizing: border-box;
+  border: max(1.5px, calc(3 * var(--u))) solid var(--aoe-ink);
   border-radius: 50%;
   background: #f5363f;
   color: #fff;
-  font-size: 15px;
-  line-height: 18px;
-  text-align: center;
+  font-size: calc(15 * var(--u));
+  line-height: 1;
+  place-items: center;
   display: none;
 }
-.aoe-tile--ready .aoe-tile__badge { display: block; }
+.aoe-tile--ready .aoe-tile__badge { display: grid; }
 .aoe-tile--locked { filter: saturate(0.45) brightness(0.78); }
 
 .aoe-tile--rebirth {
@@ -201,7 +297,7 @@ body.aoe-touch-mode .aoe-tile__key { display: none; }
   position: absolute;
   left: 0;
   top: 0;
-  width: clamp(26px, 3vw, 40px);
+  width: max(22px, calc(36 * var(--u)));
   height: auto;
   opacity: 0;
   will-change: transform, opacity;
@@ -341,67 +437,71 @@ body.aoe-touch-mode .aoe-tile__key { display: none; }
  */
 .aoe-account {
   position: fixed;
-  top: 12px;
-  right: 12px;
+  top: calc(var(--aoe-safe-t) + var(--hud-edge));
+  right: calc(var(--aoe-safe-r) + var(--hud-edge));
   z-index: 23;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 6px;
+  gap: calc(6 * var(--u));
+  /* Never wider than the space right of the Wins counter's half-width. */
+  max-width: calc(50vw - 90 * var(--u));
 }
 .aoe-account__row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 10px 4px 4px;
-  border: 3px solid var(--aoe-ink);
+  gap: calc(8 * var(--u));
+  padding: calc(4 * var(--u)) calc(10 * var(--u)) calc(4 * var(--u)) calc(4 * var(--u));
+  border: max(1.5px, calc(3 * var(--u))) solid var(--aoe-ink);
   border-radius: 999px;
   background: rgba(18, 24, 38, 0.82);
+  max-width: 100%;
+  min-width: 0;
 }
 .aoe-account__pfp {
-  width: 30px;
-  height: 30px;
+  width: max(22px, calc(30 * var(--u)));
+  height: max(22px, calc(30 * var(--u)));
+  flex: none;
   border-radius: 50%;
-  border: 2px solid var(--aoe-ink);
+  border: max(1px, calc(2 * var(--u))) solid var(--aoe-ink);
   object-fit: cover;
 }
 .aoe-account__name {
-  font-size: clamp(12px, 1.2vw, 15px);
+  font-size: max(11px, calc(15 * var(--u)));
   color: #ffffff;
-  max-width: 22vw;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .aoe-account__note {
-  font-size: clamp(10px, 1vw, 13px);
+  font-size: max(9px, calc(12 * var(--u)));
   color: #ffffff;
   opacity: 0.6;
 }
 .aoe-account__actions {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: calc(6 * var(--u));
 }
 .aoe-account__btn,
 .aoe-account__login {
   cursor: pointer;
-  border: 3px solid var(--aoe-ink);
-  border-radius: 10px;
-  padding: 5px 10px;
-  font-size: clamp(11px, 1.1vw, 14px);
+  border: max(1.5px, calc(3 * var(--u))) solid var(--aoe-ink);
+  border-radius: calc(10 * var(--u));
+  padding: calc(5 * var(--u)) calc(10 * var(--u));
+  font-size: max(11px, calc(14 * var(--u)));
   color: #ffffff;
   background: linear-gradient(180deg, #6de6ff 0%, #2aa8f5 55%, #1670d0 100%);
-  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3);
+  box-shadow: 0 calc(3 * var(--u)) 0 rgba(0, 0, 0, 0.3);
 }
 .aoe-account__login {
   background: linear-gradient(180deg, #ffd76b 0%, #ffa32b 55%, #d97708 100%);
-  padding: 7px 14px;
+  padding: calc(7 * var(--u)) calc(14 * var(--u));
 }
 .aoe-account__btn:hover,
 .aoe-account__login:hover { filter: brightness(1.1); }
-/* Touch keeps the chip but drops the row of buttons to a single tap target's
- * worth of width, so it never crowds the jump button. */
-body.aoe-touch-mode .aoe-account__name { max-width: 30vw; }
 
 /* ---- Friends and Bux rows ----------------------------------------------- */
 .aoe-friend {
@@ -481,10 +581,10 @@ body.aoe-touch-mode .aoe-account__name { max-width: 30vw; }
 /* ---- The FPS readout, from the portal's show_fps setting ----------------- */
 .aoe-fps {
   position: fixed;
-  left: 12px;
-  top: 12px;
+  left: calc(var(--aoe-safe-l) + var(--hud-edge));
+  top: calc(var(--aoe-safe-t) + var(--hud-edge));
   z-index: 23;
-  font-size: 13px;
+  font-size: max(10px, calc(13 * var(--u)));
   color: #9bf06a;
   text-shadow:
     2px 0 0 var(--aoe-ink), -2px 0 0 var(--aoe-ink),
@@ -630,20 +730,21 @@ body.aoe-touch-mode .aoe-account__name { max-width: 30vw; }
   /* Supplied art. Driving the HEIGHT and leaving the width automatic is what
    * keeps the real aspect ratio exact at every clamp step; setting both is how
    * a supplied icon gets squashed. */
-  height: clamp(36px, 4.2vw, 60px);
+  height: max(26px, calc(50 * var(--u)));
   width: auto;
-  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.45));
+  filter: drop-shadow(0 calc(3 * var(--u)) calc(5 * var(--u)) rgba(0, 0, 0, 0.45));
 }
 .aoe-pop__value {
-  font-size: clamp(16px, 2vw, 29px);
+  font-size: max(13px, calc(25 * var(--u)));
   line-height: 1;
   color: #fff;
   text-shadow:
-    3px 0 0 var(--aoe-ink), -3px 0 0 var(--aoe-ink),
-    0 3px 0 var(--aoe-ink), 0 -3px 0 var(--aoe-ink),
-    2px 2px 0 var(--aoe-ink), -2px 2px 0 var(--aoe-ink),
-    2px -2px 0 var(--aoe-ink), -2px -2px 0 var(--aoe-ink),
-    0 4px 8px rgba(0, 0, 0, 0.5);
+    var(--hud-o) 0 0 var(--aoe-ink), calc(-1 * var(--hud-o)) 0 0 var(--aoe-ink),
+    0 var(--hud-o) 0 var(--aoe-ink), 0 calc(-1 * var(--hud-o)) 0 var(--aoe-ink),
+    var(--hud-o2) var(--hud-o2) 0 var(--aoe-ink), calc(-1 * var(--hud-o2)) var(--hud-o2) 0 var(--aoe-ink),
+    var(--hud-o2) calc(-1 * var(--hud-o2)) 0 var(--aoe-ink),
+    calc(-1 * var(--hud-o2)) calc(-1 * var(--hud-o2)) 0 var(--aoe-ink),
+    0 calc(4 * var(--u)) calc(8 * var(--u)) rgba(0, 0, 0, 0.5);
 }
 .aoe-pop--run { animation: aoe-pop-float 1150ms ease-out forwards; }
 @keyframes aoe-pop-float {
@@ -669,9 +770,6 @@ body.aoe-touch-mode .aoe-account__name { max-width: 30vw; }
   }
 }
 
-/* Touch controls own the bottom corners; the rail lifts clear of them. */
-body.aoe-touch-mode .aoe-rail { --aoe-rail: 62px; }
-
 @media (prefers-reduced-motion: reduce) {
   .aoe-tile, .aoe-wins--pop .aoe-wins__value { transition: none; animation: none; }
   /* The popup still has to appear and go away, so it fades in place rather
@@ -682,12 +780,6 @@ body.aoe-touch-mode .aoe-rail { --aoe-rail: 62px; }
     15%, 65% { opacity: 1; transform: translate(-50%, -50%); }
     100% { opacity: 0; transform: translate(-50%, -50%); }
   }
-}
-
-/* A narrow window has less room either side, so the band tightens with it. */
-@media (max-width: 760px) {
-  .aoe-pop__icon { height: clamp(30px, 6vw, 44px); }
-  .aoe-pop__value { font-size: clamp(14px, 3vw, 22px); }
 }
 `;
   document.head.appendChild(style);

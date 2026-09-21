@@ -39,7 +39,9 @@ export type RespawnReason =
   /** Banked a stage and was returned to the arena. */
   | 'stage'
   /** Rebirthed, which resets the run as well as the level curve. */
-  | 'rebirth';
+  | 'rebirth'
+  /** Signed in or out mid-session, and is now on a different profile. */
+  | 'identity';
 
 /** Server -> client authoritative respawn (MessageType.Respawn). */
 export interface RespawnMessage {
@@ -118,4 +120,9 @@ export interface SetAvatarMessage {
  */
 export interface SetIdentityMessage {
   token: string;
+}
+
+/** Server -> client: this browser's new guest id. See `MessageType.GuestId`. */
+export interface GuestIdMessage {
+  playerId: string;
 }

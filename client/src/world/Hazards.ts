@@ -66,7 +66,13 @@ export class Hazards {
      * more than making a log look like a log.
      */
     const hazardMaterial = this.keepMaterial(
-      new MeshLambertMaterial({ color: PALETTE.hazard }),
+      // Self-lit a little, so a lavender bar never sinks into the pale stone
+      // it sweeps over, whichever way it faces the light.
+      new MeshLambertMaterial({
+        color: PALETTE.hazard,
+        emissive: PALETTE.hazardGlow,
+        emissiveIntensity: 0.4,
+      }),
     );
     const rockMaterial = this.keepMaterial(new MeshLambertMaterial({ color: PALETTE.rock }));
     /*
@@ -78,14 +84,18 @@ export class Hazards {
      * it is a property of the floor, read once and then routed around, and
      * painting a static field in the colour reserved for things that chase
      * would make every moving hazard in the game harder to pick out. What it
-     * gets instead is a BRIGHT TIP on a dark shaft, which is the half that has
-     * to be visible from directly above.
+     * gets instead is a GLOWING gold tip on a steel shaft, which is the half
+     * that has to be visible from directly above.
      */
     const spikeMaterial = this.keepMaterial(
       new MeshLambertMaterial({ color: PALETTE.spike }),
     );
     const spikeTipMaterial = this.keepMaterial(
-      new MeshLambertMaterial({ color: PALETTE.spikeTip }),
+      new MeshLambertMaterial({
+        color: PALETTE.spikeTip,
+        emissive: PALETTE.spikeTip,
+        emissiveIntensity: 0.55,
+      }),
     );
     const funnelMaterial = this.keepMaterial(
       new MeshLambertMaterial({ color: PALETTE.tornado, transparent: true, opacity: 0.8 }),
@@ -127,9 +137,12 @@ export class Hazards {
           // The bright tip, parented to the shaft so it never has to be moved
           // separately - and a spike never moves at all, so this is the last
           // time either of them is touched.
+          // Sized to SHEATHE the upper half of the shaft - slightly wider
+          // than it at every height - so the gold cap is actually seen. A
+          // smaller cone sits inside the shaft and shows as a single pixel.
           const tip = new Mesh(spike, spikeTipMaterial);
-          tip.position.y = 0.62;
-          tip.scale.setScalar(0.42);
+          tip.position.y = 0.7;
+          tip.scale.setScalar(0.46);
           mesh.add(tip);
           break;
         }

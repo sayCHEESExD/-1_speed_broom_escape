@@ -1,7 +1,7 @@
 # +1 Speed Broom Escape
 
-A browser multiplayer obby where you ride a magical broom through a dark
-dungeon. **Hold Space to fly** — the broom has a finite flight meter, the
+A browser multiplayer obby where you ride a magical broom through a bright,
+colourful magic dungeon. **Hold Space to fly** — the broom has a finite flight meter, the
 course is built out of gaps and climbs no hop can clear, and the whole game is
 deciding when to spend it and when to land and let it refill.
 
@@ -105,8 +105,11 @@ Ten trails, and a rebirth ladder with no end.
 
 ### Stages
 
-Thirty, in a dark magical dungeon: lava, spikes, stone vaults, conjured rune
-platforms suspended over nothing, and gaps no launch can cross.
+Thirty, in a bright magical dungeon: lava, spikes, stone vaults, conjured rune
+platforms suspended over nothing, and gaps no launch can cross. They pass
+through six recurring places - enchanted stone halls, crystal caves, lava
+chambers, sky bridges, rune towers and floating isles - each with its own
+stone, walls, banners and glow.
 
 | # | Stage           | Mechanic                                              | Level | Fly |    Wins |
 |---|-----------------|-------------------------------------------------------|------:|----:|--------:|
@@ -472,7 +475,7 @@ being paid twice.
 
 **Nothing in the world is an image.** The flagstone floors, the dungeon
 masonry, the timber walkways, the glowing rune slabs, the gold trophy pads, the
-treadmill belts, every word of world text and the cavern dark are all drawn on
+treadmill belts, every word of world text and the starry void are all drawn on
 a canvas at runtime. The only pictures in the build are the supplied rider
 model and three HUD icons — and one of those, the trophy, is also hung in the
 world over every win pad.
@@ -568,6 +571,13 @@ buttons they could neither see nor click. It is now a state the game has: the
 camera stops, the HUD is clickable, and one click on the world resumes play.
 
 **The sky is real geometry.** A gradient dome plus ninety clusters of boxes,
-merged into two meshes. The world also has a real bottom — a pit floor drawn
+merged into two meshes; the dome follows the camera and the clouds tile along
+the whole twelve-thousand-unit run.
+
+**It is bright on purpose.** Pale stone, gold trim, glowing lava, crystals,
+banners and runes, lit by a strong fill and one sun; the magic is carried by
+self-lit materials and one draw of additive halos rather than by real lights,
+so the look costs a phone almost nothing. Dark is kept only where darkness
+means something - a treadmill belt, a machine you have not unlocked. The world also has a real bottom — a pit floor drawn
 under everything, with the death plane well above it, so falling reads as
 dropping into a pit rather than into an unfinished map.

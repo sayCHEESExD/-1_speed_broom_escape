@@ -8,6 +8,7 @@ import {
   ShaderMaterial,
   SphereGeometry,
   type BufferGeometry,
+  type Camera,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PALETTE } from '../config/worldVisuals.js';
@@ -29,15 +30,23 @@ import { PALETTE } from '../config/worldVisuals.js';
 /** How far out the dome sits. Inside the camera's far plane. */
 const DOME_RADIUS = 1600;
 
-/** Cloud field extent, in world units, and how high it floats. */
+/**
+ * Cloud field extent, in world units, and how high it floats.
+ *
+ * ONE tile of it, `length` long, repeated along the run (see `follow`). The
+ * course is nearly twelve thousand units long; a single field laid over the
+ * start of it left every stage past the fifth under an empty sky.
+ */
 const FIELD = {
   halfWidth: 900,
-  fromZ: -400,
-  toZ: 2400,
+  length: 2800,
   minY: 120,
   maxY: 240,
   clusters: 90,
 } as const;
+
+/** Copies of the cloud tile kept around the camera: behind, here and ahead. */
+const CLOUD_COPIES = 3;
 
 /** Deterministic PRNG, so every client sees exactly the same sky. */
 const seeded = (seed: number): (() => number) => {
@@ -56,11 +65,45 @@ export class Sky {
 
   private readonly disposables: (BufferGeometry | ShaderMaterial | MeshBasicMaterial)[] = [];
 
+  /** The cloud tiles, one group per copy, each holding both layers. */
+  private readonly cloudTiles: Group[] = [];
+
   constructor() {
-    this.root.add(this.buildDome());
+    const dome = this.buildDome();
+    this.root.add(dome);
     this.buildClouds();
     // Drawn behind everything, and never occluding the world.
     this.root.renderOrder = -1;
+
+    /*
+     * The sky FOLLOWS whichever camera draws it.
+     *
+     * The dome used to sit at the world origin with a 1600-unit radius, so a
+     * player more than 1600 units down the course was OUTSIDE it - and a
+     * back-faced sphere seen from outside draws nothing, leaving the flat
+     * background colour behind every stage from the sixth on. Hooked on the
+     * dome's own draw rather than on the game loop, so any camera - the
+     * player's, or a debug one - gets a sky.
+     */
+    dome.onBeforeRender = (_renderer, _scene, camera: Camera) => this.follow(camera, dome);
+  }
+
+  /** Centre the dome on the camera and keep the cloud tiles around it. */
+  private follow(camera: Camera, dome: Mesh): void {
+    const { x, z } = camera.position;
+    dome.position.set(x, camera.position.y, z);
+    dome.updateMatrixWorld();
+
+    // Tiles snap to whole multiples of the tile length, so clouds keep their
+    // parallax - they are fixed in the world, never glued to the camera.
+    const base = Math.floor(z / FIELD.length) - Math.floor(CLOUD_COPIES / 2);
+    this.cloudTiles.forEach((tile, index) => {
+      const at = (base + index) * FIELD.length;
+      if (tile.position.z !== at) {
+        tile.position.z = at;
+        tile.updateMatrixWorld(true);
+      }
+    });
   }
 
   /**
@@ -76,7 +119,7 @@ export class Sky {
       depthWrite: false,
       fog: false,
       uniforms: {
-        topColor: { value: new Color(0x2a86e0) },
+        topColor: { value: new Color(PALETTE.skyTop) },
         midColor: { value: new Color(PALETTE.sky) },
         bottomColor: { value: new Color(PALETTE.fog) },
       },
@@ -93,8 +136,8 @@ export class Sky {
         uniform vec3 bottomColor;
         varying float vHeight;
         void main() {
-          // Two bands: deep blue overhead easing to the bright haze the fog
-          // colour is matched to, so the horizon and the fog meet invisibly.
+          // Two bands: luminous blue overhead easing through lavender to the
+          // haze the fog is matched to, so horizon and fog meet invisibly.
           float h = clamp(vHeight, -1.0, 1.0);
           vec3 sky = mix(midColor, topColor, clamp(h * 1.6, 0.0, 1.0));
           vec3 low = mix(bottomColor, midColor, clamp((h + 0.25) * 3.0, 0.0, 1.0));
@@ -125,7 +168,7 @@ export class Sky {
     for (let i = 0; i < FIELD.clusters; i += 1) {
       const cx = (random() * 2 - 1) * FIELD.halfWidth;
       const cy = FIELD.minY + random() * (FIELD.maxY - FIELD.minY);
-      const cz = FIELD.fromZ + random() * (FIELD.toZ - FIELD.fromZ);
+      const cz = random() * FIELD.length;
       const scale = 8 + random() * 16;
       const blocks = 5 + Math.floor(random() * 5);
 
@@ -152,23 +195,35 @@ export class Sky {
       }
     }
 
-    this.addLayer(tops, PALETTE.cloud);
-    this.addLayer(bases, PALETTE.cloudShade);
+    const layers = [this.mergeLayer(tops, PALETTE.cloud), this.mergeLayer(bases, PALETTE.cloudShade)];
+    for (let copy = 0; copy < CLOUD_COPIES; copy += 1) {
+      const tile = new Group();
+      for (const layer of layers) {
+        if (!layer) continue;
+        // The geometry and material are SHARED between copies: three tiles
+        // cost three times the draw calls and nothing more in memory.
+        const mesh = new Mesh(layer.geometry, layer.material);
+        mesh.frustumCulled = false;
+        tile.add(mesh);
+      }
+      this.cloudTiles.push(tile);
+      this.root.add(tile);
+    }
   }
 
-  private addLayer(parts: BufferGeometry[], color: number): void {
+  private mergeLayer(
+    parts: BufferGeometry[],
+    color: number,
+  ): { geometry: BufferGeometry; material: MeshBasicMaterial } | null {
     const merged = mergeGeometries(parts, false);
     for (const part of parts) part.dispose();
-    if (!merged) return;
+    if (!merged) return null;
 
     // Unlit and unfogged: a cloud two hundred units up must not fade into the
     // haze the ground uses, and must not dim as the sun's target moves.
     const material = new MeshBasicMaterial({ color, fog: false });
     this.disposables.push(merged, material);
-
-    const mesh = new Mesh(merged, material);
-    mesh.frustumCulled = false;
-    this.root.add(mesh);
+    return { geometry: merged, material };
   }
 
   dispose(): void {

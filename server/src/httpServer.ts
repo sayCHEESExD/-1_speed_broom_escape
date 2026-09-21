@@ -113,9 +113,11 @@ const handleHealth = async (response: ServerResponse): Promise<void> => {
  * So the status is chosen by one question - can this build actually deliver
  * what was bought?
  *
- *  - 200 when it is queued for its player, and 200 for a duplicate delivery
- *    of something already queued: a retry must never refund a purchase that
- *    was fulfilled the first time.
+ *  - 200 once it is DURABLY recorded for its account, and 200 for a duplicate
+ *    delivery of something already recorded: a retry must never refund a
+ *    purchase that was recorded the first time.
+ *  - 503 when storage cannot record it - unacknowledged, so refunded, never
+ *    silently lost.
  *  - 422 for a SKU this build cannot fulfil. It used to answer 200 here, which
  *    kept the player's Bux and gave them nothing - see `BuxGrants`.
  *  - 401 for a bad secret and 400 for a body that cannot be recorded at all.
@@ -149,7 +151,7 @@ const handleBuxWebhook = async (
     return;
   }
 
-  const outcome = buxGrants.record(body.userId, body.transactionId, body.sku);
+  const outcome = await buxGrants.record(body.userId, body.transactionId, body.sku);
   switch (outcome) {
     case 'queued':
     case 'duplicate':
@@ -162,6 +164,11 @@ const handleBuxWebhook = async (
     case 'unknown-sku':
       // Non-2xx on purpose: this is how the player gets their Bux back.
       reply(422, { ok: false, error: `unknown sku "${body.sku}"` });
+      return;
+    case 'unavailable':
+      // Not durably recorded, so NOT acknowledged. Bloxity refunds instead of
+      // the purchase evaporating with a pod.
+      reply(503, { ok: false, error: 'storage unavailable' });
       return;
     default:
       reply(400, { ok: false, error: 'malformed payload' });

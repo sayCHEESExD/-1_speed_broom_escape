@@ -95,7 +95,7 @@ await byToken.leave(true);
 console.log('');
 console.log(
   failures === 0
-    ? `identity OK  (the probe's purchase stays queued for "${VICTIM}", an account that does not exist; a restart clears it)`
+    ? `identity OK  (the probe's purchase stays queued for "${VICTIM}", an account that does not exist. Grants are durable, so it sits in the dev store (server/data/grants.json) until removed by hand - never run this against a real database)`
     : `${failures} problem(s) found`,
 );
 process.exit(failures === 0 ? 0 : 1);

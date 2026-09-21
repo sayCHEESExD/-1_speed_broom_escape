@@ -30,7 +30,8 @@
     "verify:capacity": "node scripts/verify-capacity.mjs",
     "verify:barrier": "npm run build:shared && node scripts/verify-barrier.mjs",
     "verify:bloxity": "npm run build:server && node scripts/verify-bloxity.mjs",
-    "verify:identity": "node scripts/verify-identity-live.mjs"
+    "verify:identity": "node scripts/verify-identity-live.mjs",
+    "verify:persistence": "npm run build:server && node scripts/verify-persistence.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

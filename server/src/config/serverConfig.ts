@@ -18,18 +18,17 @@ export interface ServerConfig {
    */
   readonly buxWebhookSecret: string;
   /**
-   * The Bloxity API this server verifies player tokens against.
-   *
-   * Overridable so a staging deployment can point at a staging API, and so a
-   * test can point at a stub - the verifier is the one outbound call this
-   * server makes, and it must be possible to run it without the real one.
-   */
-  readonly bloxityApiBase: string;
-  /**
    * The slug Bloxity issued this game's tokens under. Must match the one the
    * CLIENT was built with, or every signed-in player is refused.
    */
   readonly bloxityGameSlug: string;
+  /**
+   * The database profiles and purchases live in, or '' for the JSON dev store.
+   * Bloxity Legion injects it into every backend pod.
+   */
+  readonly mongodbUri: string;
+  /** This pod's name on Legion, or a local stand-in. Tags purchase claims in logs. */
+  readonly podName: string;
 }
 
 const int = (value: string | undefined, fallback: number): number => {
@@ -61,6 +60,7 @@ export const serverConfig: ServerConfig = {
   // `npm run dev` and `npm start`, so a restart finds the same file either way.
   dataDir: resolve(process.env['BROOM_DATA_DIR'] ?? 'data'),
   buxWebhookSecret: process.env['BLOXITY_WEBHOOK_SECRET'] ?? '',
-  bloxityApiBase: (process.env['BLOXITY_API_BASE'] ?? 'https://api.bloxity.io').replace(/\/+$/, ''),
   bloxityGameSlug: process.env['BLOXITY_GAME_ID']?.trim() || BLOXITY_GAME_SLUG,
+  mongodbUri: process.env['MONGODB_URI']?.trim() ?? '',
+  podName: process.env['POD_NAME']?.trim() || `local-${process.pid}`,
 };

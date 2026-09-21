@@ -16,6 +16,7 @@ import {
 import {
   Group,
   Mesh,
+  MeshBasicMaterial,
   MeshLambertMaterial,
   Scene,
   type BufferGeometry,
@@ -23,9 +24,10 @@ import {
   type Texture,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { PALETTE, SCENERY } from '../config/worldVisuals.js';
+import { PALETTE, SCENERY, THEMES, type ThemeName } from '../config/worldVisuals.js';
 import { BroomStands } from './BroomStands.js';
 import { CanvasSign } from './CanvasSign.js';
+import { DungeonDressing } from './DungeonDressing.js';
 import { ImageBillboard } from './ImageBillboard.js';
 import { Scoreboard } from './Scoreboard.js';
 import { Guardian } from './Guardian.js';
@@ -36,6 +38,7 @@ import { StageSigns } from './StageSigns.js';
 import { TrainingArea } from './TrainingArea.js';
 import { WorldTextures } from './WorldTextures.js';
 import { texturedBox } from './texturedBox.js';
+import { themeNameAt } from './themeAt.js';
 
 /** World units one repeat of a tiling texture covers. */
 const TILE = 6;
@@ -47,6 +50,24 @@ const TILE = 6;
  * reachable at in dev and in the build alike.
  */
 const TROPHY_URL = '/ui/trophy.png';
+
+/**
+ * The solid kinds that wear their STAGE'S theme rather than one shared look.
+ *
+ * The surfaces a stage is mostly made of - its floor, its stone, its columns
+ * and its roof - so each section reads as its own place. Everything with a
+ * gameplay meaning of its own (rune slabs, win pads, ice, timber, ruins) keeps
+ * one colour across the whole game, because that colour is a promise.
+ */
+const THEMED_KINDS: ReadonlySet<SolidKind> = new Set<SolidKind>([
+  'floor',
+  'stone',
+  'pillar',
+  'ceiling',
+]);
+
+/** How fast the lava's surface creeps, in texture repeats per second. */
+const LAVA_FLOW = 0.035;
 
 /**
  * The visible world.
@@ -75,12 +96,16 @@ export class CourseWorld {
   /** The three leaderboards on the back wall of the spawn arena. */
   readonly scoreboard: Scoreboard;
   readonly sky: Sky;
+  /** Banners, runes, crystals, halos and motes. Scenery only. */
+  readonly dressing: DungeonDressing;
 
   private readonly textures = new WorldTextures();
   private readonly materials: Material[] = [];
   private readonly winSigns: CanvasSign[] = [];
   /** The trophy hanging over each win pad. Supplied art, used as it is. */
   private readonly trophies: ImageBillboard[] = [];
+  /** The lava's texture, crept along each frame so the pools read as molten. */
+  private lavaMap: Texture | null = null;
 
   constructor() {
     this.buildSolids();
@@ -118,6 +143,9 @@ export class CourseWorld {
 
     this.sky = new Sky();
     this.root.add(this.sky.root);
+
+    this.dressing = new DungeonDressing();
+    this.root.add(this.dressing.root);
   }
 
   addTo(scene: Scene): void {
@@ -136,6 +164,11 @@ export class CourseWorld {
     this.stands.update(delta);
     this.training.update(delta);
     this.guardian.update(delta);
+    this.dressing.update(elapsed);
+    if (this.lavaMap) {
+      this.lavaMap.offset.x = (elapsed * LAVA_FLOW) % 1;
+      this.lavaMap.offset.y = (elapsed * LAVA_FLOW * 0.6) % 1;
+    }
   }
 
   dispose(): void {
@@ -151,25 +184,36 @@ export class CourseWorld {
     this.guardian.dispose();
     this.scoreboard.dispose();
     this.sky.dispose();
+    this.dressing.dispose();
     this.root.removeFromParent();
   }
 
-  /** Draw every solid, grouped by kind so each group is one mesh. */
+  /**
+   * Draw every solid, grouped by kind - and, for the themed kinds, by the
+   * stage theme it sits in - so each group is one mesh. Six themes over four
+   * kinds is a couple of dozen draw calls, not one per stage.
+   */
   private buildSolids(): void {
-    const byKind = new Map<SolidKind, BufferGeometry[]>();
+    const groups = new Map<string, { kind: SolidKind; theme: ThemeName; parts: BufferGeometry[] }>();
 
     for (const solid of COURSE_SOLIDS) {
-      const list = byKind.get(solid.kind) ?? [];
-      list.push(boxFor(solid, TILE));
-      byKind.set(solid.kind, list);
+      const themed = THEMED_KINDS.has(solid.kind);
+      const theme: ThemeName = themed ? themeNameAt((solid.minZ + solid.maxZ) / 2) : 'enchanted';
+      const key = themed ? `${solid.kind}|${theme}` : solid.kind;
+      let group = groups.get(key);
+      if (!group) {
+        group = { kind: solid.kind, theme, parts: [] };
+        groups.set(key, group);
+      }
+      group.parts.push(boxFor(solid, TILE));
     }
 
-    for (const [kind, geometries] of byKind) {
+    for (const { kind, theme, parts: geometries } of groups.values()) {
       const merged = mergeGeometries(geometries, false);
       for (const geometry of geometries) geometry.dispose();
       if (!merged) continue;
 
-      const mesh = new Mesh(merged, this.materialFor(kind));
+      const mesh = new Mesh(merged, this.materialFor(kind, theme));
       mesh.receiveShadow = true;
       mesh.castShadow =
         kind === 'block' || kind === 'pillar' || kind === 'plank' || kind === 'ruin';
@@ -248,35 +292,41 @@ export class CourseWorld {
 
     for (const [surface, parts] of byMaterial) {
       if (surface === 'lava') {
-        // The one emissive material in the world. Lava that took the scene's
-        // lighting like everything else would read as orange rock.
+        // Vivid and self-lit, with bright yellow veins through the orange, and
+        // CREEPING (see `update`). Lava that took the scene's lighting like
+        // everything else would read as orange rock; this reads as the
+        // hottest, brightest thing in the room, which is what it is.
         const map = this.textures.sand(PALETTE.lava, PALETTE.lavaDark);
+        this.lavaMap = map;
         const material = new MeshLambertMaterial({ map });
-        material.emissive.setHex(0xff5a12);
-        material.emissiveIntensity = 0.65;
+        material.emissive.setHex(PALETTE.lavaGlow);
+        material.emissiveIntensity = 1.1;
         material.emissiveMap = map;
         this.materials.push(material);
         this.addMerged(parts, material, false);
         continue;
       }
       // The VOID is the default, which is right for this game: most of what
-      // is under these platforms is nothing at all.
-      const colours =
-        surface === 'water'
-          ? [PALETTE.water, PALETTE.waterDark]
-          : [PALETTE.quicksand, PALETTE.quicksandDark];
-      this.addMerged(
-        parts,
-        this.texturedMaterial(
-          this.textures.sand(colours[0] as string, colours[1] as string),
-        ),
-        true,
-      );
+      // is under these platforms is nothing at all. It is a deep starry indigo
+      // whose specks GLOW, and water glows faintly too - so both read as a
+      // surface from above instead of as a black hole in the world.
+      const water = surface === 'water';
+      const colours = water
+        ? [PALETTE.water, PALETTE.waterDark]
+        : [PALETTE.quicksand, PALETTE.quicksandDark];
+      const map = this.textures.sand(colours[0] as string, colours[1] as string);
+      const material = new MeshLambertMaterial({ map });
+      material.emissive.setHex(0xffffff);
+      material.emissiveMap = map;
+      material.emissiveIntensity = water ? 0.25 : 0.45;
+      this.materials.push(material);
+      this.addMerged(parts, material, true);
     }
   }
 
   /**
-   * The pink walls that box the world in, capped with green hedge.
+   * The masonry walls that box the world in, each stage's in its own theme,
+   * capped with a glowing course in the theme's trim colour.
    *
    * These are SCENERY. What actually holds the player in is
    * `WorldCollision.clampToBounds`, which is applied after the substep has
@@ -284,13 +334,31 @@ export class CourseWorld {
    */
   private buildWalls(): void {
     const thickness = 5;
-    const walls: BufferGeometry[] = [];
-    const hedges: BufferGeometry[] = [];
+    // Per theme, so each stage's walls and wall cap wear its own colours.
+    // `walls` and `hedges` always point at the lists of the span being built.
+    const wallsBy = new Map<ThemeName, BufferGeometry[]>();
+    const capsBy = new Map<ThemeName, BufferGeometry[]>();
+    const listFor = (
+      map: Map<ThemeName, BufferGeometry[]>,
+      theme: ThemeName,
+    ): BufferGeometry[] => {
+      let list = map.get(theme);
+      if (!list) {
+        list = [];
+        map.set(theme, list);
+      }
+      return list;
+    };
+    let walls: BufferGeometry[] = listFor(wallsBy, 'vault');
+    let hedges: BufferGeometry[] = listFor(capsBy, 'vault');
 
     const run = (halfWidth: number, fromZ: number, toZ: number): void => {
       const length = toZ - fromZ;
       if (length <= 0) return;
       const centreZ = (fromZ + toZ) / 2;
+      const theme = themeNameAt(centreZ);
+      walls = listFor(wallsBy, theme);
+      hedges = listFor(capsBy, theme);
 
       for (const side of [-1, 1]) {
         const x = side * (halfWidth + thickness / 2);
@@ -349,6 +417,8 @@ export class CourseWorld {
     for (const area of WIDE_AREAS) {
       boundaries.push(area.minZ, area.maxZ);
     }
+    // And at every stage start, so each stage's walls take its own theme.
+    for (const stage of STAGES) boundaries.push(stage.startZ);
     const marks = [...new Set(boundaries)]
       .filter((z) => z >= COURSE.lobbyStartZ && z <= end)
       .sort((a, b) => a - b);
@@ -381,10 +451,19 @@ export class CourseWorld {
       COURSE.wallHeight / 2 - COURSE.floorThickness,
       COURSE.lobbyStartZ - thickness / 2,
     );
-    walls.push(back);
+    listFor(wallsBy, 'vault').push(back);
 
-    this.addMerged(walls, this.brickMaterial(), true);
-    this.addMerged(hedges, this.solidMaterial(PALETTE.hedge), true);
+    for (const [theme, list] of wallsBy) this.addMerged(list, this.brickMaterial(theme), true);
+    for (const [theme, list] of capsBy) {
+      // The cap glows a little: it is the bright line that draws the shape of
+      // the corridor against the sky, stage by stage.
+      const cap = THEMES[theme].cap;
+      const material = new MeshLambertMaterial({ color: cap });
+      material.emissive.setHex(cap);
+      material.emissiveIntensity = 0.3;
+      this.materials.push(material);
+      this.addMerged(list, material, true);
+    }
   }
 
   /**
@@ -495,6 +574,12 @@ export class CourseWorld {
     const posts: BufferGeometry[] = [];
     const flames: BufferGeometry[] = [];
     const iron: BufferGeometry[] = [];
+    // Brazier bodies are GOLD, not iron: they stand in the open where the
+    // player rides past them, and a dark tripod in a bright hall reads as a
+    // hole in the picture rather than as a lamp.
+    const gilt: BufferGeometry[] = [];
+    // The hot heart of each fire, brighter and smaller than the flame round it.
+    const cores: BufferGeometry[] = [];
     const crystals: BufferGeometry[] = [];
 
     for (const decoration of DECORATIONS) {
@@ -537,6 +622,9 @@ export class CourseWorld {
         const flame = texturedBox(1.5 * scale, 2.2 * scale, 1.5 * scale, TILE);
         flame.translate(x, y + 1.6 * scale, z);
         flames.push(flame);
+        const core = texturedBox(0.8 * scale, 1.5 * scale, 0.8 * scale, TILE);
+        core.translate(x, y + 1.9 * scale, z);
+        cores.push(core);
         continue;
       }
 
@@ -551,14 +639,17 @@ export class CourseWorld {
             y + 1.5 * scale,
             z + Math.sin(angle) * 1.1 * scale,
           );
-          iron.push(leg);
+          gilt.push(leg);
         }
         const bowl = texturedBox(3.2 * scale, 1.1 * scale, 3.2 * scale, TILE);
         bowl.translate(x, y + 3.4 * scale, z);
-        iron.push(bowl);
+        gilt.push(bowl);
         const fire = texturedBox(2.4 * scale, 2.2 * scale, 2.4 * scale, TILE);
         fire.translate(x, y + 4.8 * scale, z);
         flames.push(fire);
+        const core = texturedBox(1.3 * scale, 1.8 * scale, 1.3 * scale, TILE);
+        core.translate(x, y + 5.3 * scale, z);
+        cores.push(core);
         continue;
       }
 
@@ -603,6 +694,7 @@ export class CourseWorld {
     this.addMerged(rocks, this.solidMaterial(PALETTE.rock), false);
     this.addMerged(posts, this.solidMaterial(PALETTE.trunk), false);
     this.addMerged(iron, this.solidMaterial(PALETTE.metalDark), false);
+    this.addMerged(gilt, this.solidMaterial(PALETTE.brazier), false);
 
     if (crystals.length > 0) {
       // Lit, and the same violet the rune slabs are: in this world a glow is
@@ -614,7 +706,7 @@ export class CourseWorld {
         opacity: 0.85,
       });
       material.emissive.setHex(PALETTE.runeGlow);
-      material.emissiveIntensity = 0.9;
+      material.emissiveIntensity = 1.0;
       this.materials.push(material);
       this.addMerged(crystals, material, false);
     }
@@ -631,9 +723,13 @@ export class CourseWorld {
     if (flames.length > 0) {
       const material = new MeshLambertMaterial({ color: PALETTE.flame });
       material.emissive.setHex(PALETTE.flame);
-      material.emissiveIntensity = 0.8;
+      material.emissiveIntensity = 1.1;
       this.materials.push(material);
       this.addMerged(flames, material, false);
+
+      const core = new MeshBasicMaterial({ color: PALETTE.flameCore });
+      this.materials.push(core);
+      this.addMerged(cores, core, false);
     }
   }
 
@@ -694,13 +790,15 @@ export class CourseWorld {
     this.root.add(mesh);
   }
 
-  /** One material per kind, built once and remembered for disposal. */
-  private materialFor(kind: SolidKind): Material {
+  /**
+   * One material per kind (and per theme, for the themed kinds), built once
+   * and remembered for disposal.
+   */
+  private materialFor(kind: SolidKind, themeName: ThemeName): Material {
+    const theme = THEMES[themeName];
     switch (kind) {
       case 'floor':
-        return this.texturedMaterial(
-          this.textures.grassStuds(PALETTE.grass, PALETTE.grassStud),
-        );
+        return this.texturedMaterial(this.textures.grassStuds(theme.floor, theme.floorStud));
       case 'lobby':
         return this.texturedMaterial(
           this.textures.grassStuds(PALETTE.lobbyGrass, PALETTE.lobbyGrassStud),
@@ -721,7 +819,7 @@ export class CourseWorld {
       case 'ice':
         return this.texturedMaterial(this.textures.ice(PALETTE.ice, PALETTE.iceStud));
       case 'stone':
-        return this.texturedMaterial(this.textures.stone(PALETTE.stone, PALETTE.stoneDark));
+        return this.texturedMaterial(this.textures.stone(theme.stone, theme.stoneDark));
       case 'log':
         return this.texturedMaterial(
           this.textures.planks(PALETTE.log, PALETTE.logDark, PALETTE.woodSpeck),
@@ -731,11 +829,21 @@ export class CourseWorld {
           this.textures.stone(hex(PALETTE.metal), hex(PALETTE.metalDark)),
         );
       case 'pillar':
-        return this.brickMaterial();
-      case 'ceiling':
-        // The same masonry as the walls, so the room closes rather than being
-        // capped with something that reads as a different building.
-        return this.brickMaterial();
+        return this.brickMaterial(themeName);
+      case 'ceiling': {
+        // The walls' own masonry, so the room closes rather than being capped
+        // with something that reads as a different building - but SELF-LIT.
+        // A roof is only ever seen from below, where the sun never reaches:
+        // unlit it is a dark slab over the whole stage, and in a paler stone
+        // it melts into the haze and stops reading as a roof at all.
+        const map = this.textures.brick(theme.wall, theme.wallDark, PALETTE.wallSpeck);
+        const material = new MeshLambertMaterial({ map });
+        material.emissive.setHex(0xffffff);
+        material.emissiveMap = map;
+        material.emissiveIntensity = 0.38;
+        this.materials.push(material);
+        return material;
+      }
       case 'rune': {
         /*
          * THE conjured platform, and the one material in the world that emits
@@ -752,7 +860,7 @@ export class CourseWorld {
           map: this.textures.runeSlab(hex(PALETTE.rune), hex(PALETTE.runeEdge)),
         });
         material.emissive.setHex(PALETTE.runeGlow);
-        material.emissiveIntensity = 0.5;
+        material.emissiveIntensity = 0.6;
         this.materials.push(material);
         return material;
       }
@@ -763,7 +871,7 @@ export class CourseWorld {
           map: this.textures.goldCheck(PALETTE.winPad, PALETTE.winPadAlt),
         });
         material.emissive.setHex(0xffb832);
-        material.emissiveIntensity = 0.45;
+        material.emissiveIntensity = 0.6;
         this.materials.push(material);
         return material;
       }
@@ -773,9 +881,10 @@ export class CourseWorld {
     }
   }
 
-  private brickMaterial(): Material {
+  private brickMaterial(themeName: ThemeName): Material {
+    const theme = THEMES[themeName];
     return this.texturedMaterial(
-      this.textures.brick(PALETTE.wall, PALETTE.wallDark, PALETTE.wallSpeck),
+      this.textures.brick(theme.wall, theme.wallDark, PALETTE.wallSpeck),
     );
   }
 

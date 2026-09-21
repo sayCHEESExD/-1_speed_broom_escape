@@ -1,94 +1,78 @@
-import { INITIAL_OWNED_BROOMS } from '@broom/shared';
-import { createPersistence, type PersistenceAdapter, type StoredProfile } from '../persistence/index.js';
-import type { PlayerState } from '../rooms/state/PlayerState.js';
+import { storage, type StoredProfile } from '../persistence/index.js';
+import { logger } from '../util/logger.js';
+
+const SCOPE = 'leaderboard-cache';
+
+/** How often the cache is refreshed from storage. A board a minute stale is fine. */
+const REFRESH_MS = 60_000;
 
 /**
- * Progression that outlives a session.
+ * A READ-ONLY, possibly-stale view of every stored profile - for the
+ * leaderboard, and for nothing else.
  *
- * A CACHE in front of a durable adapter, not the only copy: a room dies with
- * its last client, so the store is process-wide, and the adapter is what makes
- * a server RESTART survivable rather than just a reconnect.
+ * This used to be THE profile store: every profile read into memory at boot
+ * and restored from here at join. With several pods sharing one database that
+ * is wrong - another pod may have saved a player since this one booted - so a
+ * join now reads its profile from storage directly (`Profiles.resolve*`), and
+ * this cache only feeds the boards on the vault wall.
  *
- * Keyed by a browser-stored player id. Two tabs in one browser therefore share
- * a profile, which is the correct behaviour - they are one player.
+ * Refreshed from storage on a slow timer. When two copies of a profile meet,
+ * the newer `updatedAt` wins, so a refresh can never roll back a save this pod
+ * has just made. A guest copy that was migrated into an account is left out:
+ * its progress lives on under the account, and ranking both would put the same
+ * player on the board twice.
  */
 class ProfileStore {
-  private readonly profiles = new Map<string, StoredProfile>();
-  private readonly adapter: PersistenceAdapter = createPersistence();
-  private opened = false;
+  private readonly cache = new Map<string, StoredProfile>();
+  private timer: NodeJS.Timeout | null = null;
 
-  /** Read everything into memory. Call once, before the server listens. */
-  open(): void {
-    if (this.opened) return;
-    this.opened = true;
-    for (const [id, profile] of this.adapter.load()) this.profiles.set(id, profile);
+  /** Start refreshing. Never throws; a failed refresh keeps the old view. */
+  start(): void {
+    void this.refresh();
+    this.timer = setInterval(() => void this.refresh(), REFRESH_MS);
+    this.timer.unref();
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
   }
 
   get size(): number {
-    return this.profiles.size;
+    return this.cache.size;
   }
 
-  /**
-   * Every stored profile, id and all.
-   *
-   * For the leaderboard, which has to be able to show players who are not
-   * currently connected - a board that emptied when the server did would say
-   * nothing about anybody's progress.
-   */
-  entries(): IterableIterator<[string, StoredProfile]> {
-    return this.profiles.entries();
+  async refresh(): Promise<void> {
+    try {
+      const all = await storage.loadAll();
+      for (const [key, profile] of all) this.consider(key, profile);
+    } catch (error) {
+      logger.warn(SCOPE, `refresh failed; keeping the previous view (${String(error)})`);
+    }
   }
 
-  /**
-   * Apply a stored profile onto fresh player state.
-   *
-   * Only the DERIVING facts are restored. Level, movement speed, jump velocity
-   * and the equipped broom are all recomputed by their own services from
-   * these, so returning players get the current tuning rather than a snapshot
-   * of whatever it was when they left.
-   */
-  restore(playerId: string, player: PlayerState): boolean {
-    const profile = this.profiles.get(playerId);
-    if (!profile) return false;
-
-    player.totalSpeed = profile.totalSpeed;
-    player.wins = profile.wins;
-    // A profile saved before the roster existed owns nothing; the starter is
-    // free, so it is always granted rather than leaving the player unmounted.
-    player.ownedBrooms = profile.ownedBrooms | INITIAL_OWNED_BROOMS;
-    player.rebirths = profile.rebirths;
-    player.ownedTrails = profile.ownedTrails;
-    player.trailSlot = profile.trailSlot;
-    player.bestStage = profile.bestStage;
-    return true;
+  /** A save this pod just made, so the board reflects it before the next refresh. */
+  noteSaved(key: string, profile: StoredProfile): void {
+    this.consider(key, profile);
   }
 
-  /** Write the player's current progression back to the cache and the disk. */
-  save(playerId: string, player: PlayerState): void {
-    if (!playerId) return;
-    this.profiles.set(playerId, {
-      totalSpeed: player.totalSpeed,
-      wins: player.wins,
-      ownedBrooms: player.ownedBrooms,
-      rebirths: player.rebirths,
-      ownedTrails: player.ownedTrails,
-      trailSlot: player.trailSlot,
-      bestStage: player.bestStage,
-      updatedAt: Date.now(),
-    });
-    this.adapter.save(this.profiles);
+  /** Every rankable profile: migrated guest copies excluded. */
+  *entries(): IterableIterator<[string, StoredProfile]> {
+    for (const entry of this.cache) {
+      if (!entry[1].migratedTo) yield entry;
+    }
   }
 
-  /** Make any pending write durable. Called on shutdown. */
-  flush(): void {
-    this.adapter.flush();
+  private consider(key: string, profile: StoredProfile): void {
+    const current = this.cache.get(key);
+    if (current && (current.updatedAt ?? 0) > (profile.updatedAt ?? 0)) {
+      // Keep the newer numbers, but take a migration marker the older copy
+      // lacked - it only ever arrives from storage.
+      if (profile.migratedTo && !current.migratedTo) current.migratedTo = profile.migratedTo;
+      return;
+    }
+    this.cache.set(key, { ...(current ?? {}), ...profile });
   }
 }
 
-/**
- * Process-wide singleton.
- *
- * A room dies with its last client, so per-room storage would lose a player's
- * progression the moment they were briefly alone and disconnected.
- */
 export const profileStore = new ProfileStore();
