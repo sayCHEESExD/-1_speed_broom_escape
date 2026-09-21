@@ -53,7 +53,13 @@ export class BloxityAvatar {
   private readonly loadedTextures: Texture[] = [];
 
   /** What is currently worn, so an unchanged patch does no work. */
-  private currentSkin: string | null = null;
+  /**
+   * The skin currently worn: an item id, null for Bloxity's DEFAULT skin, or
+   * undefined for "nothing applied to this body yet". Undefined and null must
+   * differ: after a rebind the default skin has to be put on the NEW body, and
+   * reusing null for both is how a default-avatar Bloxity body came out bare.
+   */
+  private currentSkin: string | null | undefined = undefined;
   private currentHat: string | null = null;
   private currentBack: string | null = null;
 
@@ -106,7 +112,7 @@ export class BloxityAvatar {
     this.defaultMap = this.material?.map ?? null;
     this.wearingBloxityBody = bloxityBody;
 
-    this.currentSkin = null;
+    this.currentSkin = undefined;
     this.currentHat = null;
     this.currentBack = null;
   }

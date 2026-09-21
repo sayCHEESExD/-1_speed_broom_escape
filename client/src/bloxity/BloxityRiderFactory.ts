@@ -64,6 +64,10 @@ export class BloxityRiderFactory {
       })
       .catch((error: unknown) => {
         logger.warn(SCOPE, `base avatar failed to load: ${String(error)}`);
+        // NOT cached: a failure forgotten here is retried by the next build.
+        // Caching it would leave every rider on the bundled fallback for the
+        // rest of the session because of one dropped request.
+        this.prototype = null;
         return null;
       });
     return this.prototype;

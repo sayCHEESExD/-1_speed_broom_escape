@@ -1,7 +1,6 @@
 import {
   DEFAULT_APPEARANCE,
   DEFAULT_PROPORTIONS,
-  isDefaultAppearance,
   type AvatarAppearance,
   type AvatarProportions,
 } from '@broom/shared';
@@ -11,7 +10,27 @@ import { bloxityRiderFactory } from './BloxityRiderFactory.js';
 import { describeItem, peekItem } from './bloxityAssets.js';
 
 /**
+ * The body key while the rider is still the BUNDLED character - before any
+ * Bloxity body has been built, or after one failed to load. Deliberately not
+ * a key any look can produce, so the first look of all - Bloxity's default
+ * included - always builds a Bloxity body.
+ */
+const BUNDLED = '\u0000bundled';
+
+/** Retry a Bloxity body that failed to load: from here, doubling, to the cap. */
+const RETRY_MIN_MS = 4000;
+const RETRY_MAX_MS = 60_000;
+
+/**
  * Puts one player's Bloxity appearance onto one mount.
+ *
+ * BLOXITY'S APPEARANCE IS THE SOURCE OF TRUTH - including Bloxity's DEFAULT
+ * avatar. A player with nothing equipped is not "use this game's character":
+ * they wear Bloxity's own default body (`player.glb` with its stock parts) in
+ * Bloxity's own default skin (`skins/0.png`), exactly as the portal draws
+ * them. The bundled `player.fbx` and its texture are a FALLBACK ONLY, worn
+ * while the Bloxity body is loading and if it cannot be loaded at all - and a
+ * failed load is retried on a backoff, so the fallback is never permanent.
  *
  * The single place that decides WHICH body a rider has, and it is deliberately
  * shared by the local player and every remote one: a player who looks one way
@@ -39,8 +58,10 @@ export class AvatarDresser {
   private appearance: AvatarAppearance = DEFAULT_APPEARANCE;
   private proportions: AvatarProportions = DEFAULT_PROPORTIONS;
 
-  /** The body currently built, as a key. Empty means the bundled default. */
-  private bodyKey = '';
+  /** The body currently built or being built, as a key. `BUNDLED` until one is. */
+  private bodyKey = BUNDLED;
+  private retryDelay = RETRY_MIN_MS;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * Guards against an out-of-order build.
    *
@@ -56,6 +77,12 @@ export class AvatarDresser {
     this.mount = mount;
     const rider = mount.rider;
     this.avatar = new BloxityAvatar(rider.visual, rider.model);
+    // Start on Bloxity's DEFAULT avatar straight away, rather than waiting for
+    // a look to arrive: a player whose portal never reports an avatar change
+    // - a guest, a default account, an SDK that loaded late - must still be
+    // drawn as Bloxity draws them, not as this game's bundled character. A
+    // real look replaces this the moment it arrives.
+    this.setLook(DEFAULT_APPEARANCE, DEFAULT_PROPORTIONS);
   }
 
   /**
@@ -76,11 +103,15 @@ export class AvatarDresser {
     this.appearance = appearance;
     this.proportions = proportions;
 
-    const wantsBloxityBody = !isDefaultAppearance(appearance);
-    const key = wantsBloxityBody ? bodyKeyOf(appearance) : '';
+    // ALWAYS a Bloxity body. Nothing equipped yields Bloxity's default one -
+    // `BloxityRiderFactory` keeps the stock parts for every empty slot, and
+    // `BloxityAvatar` gives an unskinned Bloxity body Bloxity's default skin.
+    const key = bodyKeyOf(appearance);
     if (key !== this.bodyKey) {
       this.bodyKey = key;
-      void this.rebuildBody(wantsBloxityBody, appearance);
+      this.cancelRetry();
+      this.retryDelay = RETRY_MIN_MS;
+      void this.rebuildBody(appearance);
     }
 
     // The worn layer goes on regardless: it is valid on either body, and on a
@@ -91,6 +122,7 @@ export class AvatarDresser {
   dispose(): void {
     this.disposed = true;
     this.bodyToken += 1;
+    this.cancelRetry();
     this.avatar.dispose();
   }
 
@@ -136,25 +168,53 @@ export class AvatarDresser {
     return { ...appearance, headId };
   }
 
-  private async rebuildBody(
-    wantsBloxityBody: boolean,
-    appearance: AvatarAppearance,
-  ): Promise<void> {
+  private async rebuildBody(appearance: AvatarAppearance): Promise<void> {
     const token = (this.bodyToken += 1);
 
-    // Null covers three cases that all mean the same thing to the mount: the
-    // player is wearing nothing Bloxity, the asset could not be fetched, or
-    // the base body itself is unavailable. Each restores the bundled rider.
-    const model = wantsBloxityBody ? await bloxityRiderFactory.build(appearance) : null;
+    const model = await bloxityRiderFactory.build(appearance);
     if (this.disposed || token !== this.bodyToken) return;
+
+    if (!model) {
+      // Bloxity's base body could not be fetched. The FALLBACK: keep - or go
+      // back to - the bundled character, and try again on a backoff. Not
+      // before: an avatar the player has actually equipped must not be
+      // replaced by this game's texture because one request failed.
+      if (this.mount.rider.model.userData['bloxityRider'] === true) {
+        this.mount.setRider(null);
+        const rider = this.mount.rider;
+        this.avatar.rebind(rider.visual, rider.model, false);
+        this.avatar.apply(this.appearance, this.proportions);
+      }
+      this.bodyKey = BUNDLED;
+      this.scheduleRetry();
+      return;
+    }
 
     this.mount.setRider(model);
 
     const rider = this.mount.rider;
-    this.avatar.rebind(rider.visual, rider.model, model !== null);
+    this.avatar.rebind(rider.visual, rider.model, true);
     // Re-wear onto the body that just arrived. The skin and the accessories
-    // were applied to the OLD one, and a rebind deliberately forgets them.
+    // were applied to the OLD one, and a rebind deliberately forgets them -
+    // which is also what guarantees the Bloxity skin goes on AFTER the body,
+    // with nothing left to paint the bundled texture over it afterwards.
     this.avatar.apply(this.appearance, this.proportions);
+  }
+
+  private scheduleRetry(): void {
+    if (this.disposed || this.retryTimer) return;
+    const delay = this.retryDelay;
+    this.retryDelay = Math.min(this.retryDelay * 2, RETRY_MAX_MS);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (this.disposed || this.bodyKey !== BUNDLED) return;
+      this.setLook(this.requested, this.requestedProportions);
+    }, delay);
+  }
+
+  private cancelRetry(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
   }
 }
 

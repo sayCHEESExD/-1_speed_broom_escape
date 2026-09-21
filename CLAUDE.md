@@ -702,6 +702,17 @@ The cross-game portal: login, avatars, friends, synced settings and Bux.
 - **A player is drawn as their real Bloxity avatar, local and remote alike**;
   `player.glb` carries the same twelve bone names `PlayerRig` binds.
 - `AvatarDresser` is the ONE thing that decides which body a rider has.
+- **Bloxity's appearance is the source of truth, INCLUDING the Bloxity default
+  avatar.** Nothing equipped means Bloxity's default body (`player.glb`, stock
+  parts) in Bloxity's default skin (`skins/0.png`) - never this game's bundled
+  `player.fbx` and its `green.png`. Every rider, local and remote, starts
+  dressing as the Bloxity default at construction, so no rider depends on an
+  avatar event arriving. The bundled character is a FALLBACK ONLY, shown while
+  the Bloxity body loads or if it cannot be fetched; the dresser retries on a
+  backoff and `BloxityRiderFactory` never caches a failed base-body load. The
+  skin is applied AFTER each new body arrives (`rebind` then `apply`), and
+  `BloxityAvatar.currentSkin` uses `undefined` for "nothing applied yet" so the
+  DEFAULT skin (null) is still put on a freshly built body.
 - The appearance is the ONE replicated field originating with a client, and it
   is safe because it decides nothing.
 - `forceHeadId` is a head REPLACEMENT, not a hiding flag.
