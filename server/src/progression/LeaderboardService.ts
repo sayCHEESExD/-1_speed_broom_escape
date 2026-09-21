@@ -1,4 +1,10 @@
-import { LEADERBOARD_SIZE, handleFor } from '@broom/shared';
+import {
+  GUEST_FALLBACK_NAME,
+  LEADERBOARD_SIZE,
+  PLAYER_FALLBACK_NAME,
+  cleanDisplayName,
+} from '@broom/shared';
+import { ACCOUNT_PREFIX } from './Profiles.js';
 import type { LeaderEntry, LeaderboardState } from '../rooms/state/CourseState.js';
 import type { PlayerState } from '../rooms/state/PlayerState.js';
 import { profileStore } from './ProfileStore.js';
@@ -8,7 +14,10 @@ const REFRESH_SECONDS = 2;
 
 /** One candidate, before it is ranked. */
 interface Candidate {
-  readonly handle: string;
+  /** The player's Bloxity display name - what the row SHOWS. */
+  readonly name: string;
+  /** Their Bloxity profile picture URL, '' for none. */
+  readonly pfp: string;
   readonly wins: number;
   readonly speed: number;
   readonly rebirths: number;
@@ -54,31 +63,44 @@ export class LeaderboardService {
     live: Iterable<[string, PlayerState]>,
     playerIds: ReadonlyMap<string, string>,
   ): void {
-    const byHandle = new Map<string, Candidate>();
+    /*
+     * Keyed by PROFILE KEY - the internal id a player's progress is saved
+     * under - so a live player and their stored copy are one row, and two
+     * players who happen to share a display name are two. The key itself is
+     * never shown: every row shows the Bloxity display name and picture.
+     */
+    const byKey = new Map<string, Candidate>();
 
-    for (const [id, profile] of profileStore.entries()) {
-      byHandle.set(handleFor(id), {
-        handle: handleFor(id),
+    for (const [key, profile] of profileStore.entries()) {
+      byKey.set(key, {
+        // A profile saved before names were stored has none; it is still a
+        // real player, shown generically until they next play.
+        name:
+          cleanDisplayName(profile.displayName) ||
+          (key.startsWith(ACCOUNT_PREFIX) ? PLAYER_FALLBACK_NAME : GUEST_FALLBACK_NAME),
+        pfp: typeof profile.pfp === 'string' ? profile.pfp : '',
         wins: profile.wins,
         speed: profile.totalSpeed,
         rebirths: profile.rebirths,
       });
     }
 
-    // Live state last, so it overwrites the stored copy of the same player.
+    // Live state last, so it overwrites the stored copy of the same player -
+    // including their name and picture, which the server refreshes from
+    // Bloxity while they are online.
     for (const [sessionId, player] of live) {
-      const id = playerIds.get(sessionId);
-      if (!id) continue;
-      const handle = handleFor(id);
-      byHandle.set(handle, {
-        handle,
+      const key = playerIds.get(sessionId);
+      if (!key) continue;
+      byKey.set(key, {
+        name: player.displayName || GUEST_FALLBACK_NAME,
+        pfp: player.pfp,
         wins: player.wins,
         speed: player.totalSpeed,
         rebirths: player.rebirths,
       });
     }
 
-    const all = [...byHandle.values()];
+    const all = [...byKey.values()];
     fill(board.wins, all, (c) => c.wins);
     fill(board.speed, all, (c) => c.speed);
     fill(board.rebirths, all, (c) => c.rebirths);
@@ -107,11 +129,13 @@ const fill = (
     const entry = into[i];
     if (!entry) continue;
     const candidate = ranked[i];
-    const handle = candidate ? candidate.handle : '';
+    const name = candidate ? candidate.name : '';
+    const pfp = candidate ? candidate.pfp : '';
     const value = candidate ? Math.floor(pick(candidate)) : 0;
     // Assign only on a real change, for the same reason as above: an identical
     // write still counts as a change to the schema encoder.
-    if (entry.handle !== handle) entry.handle = handle;
+    if (entry.name !== name) entry.name = name;
+    if (entry.pfp !== pfp) entry.pfp = pfp;
     if (entry.value !== value) entry.value = value;
   }
 };

@@ -14,6 +14,7 @@ import {
 import type { LeaderboardSnapshot, NetLeaderEntry } from '../net/netTypes.js';
 import { PALETTE } from '../config/worldVisuals.js';
 import { logger } from '../util/logger.js';
+import { drawThumbnail, onThumbnailLoaded, thumbnail } from './AvatarThumbnails.js';
 import { CanvasSign } from './CanvasSign.js';
 import { texturedBox } from './texturedBox.js';
 
@@ -310,6 +311,10 @@ class PanelSurface {
   /** The line shown instead of rows when nothing is ranked yet. */
   private placeholder = 'No scores yet';
 
+  /** The rows last drawn, so a picture that finishes loading can redraw them. */
+  private rows: readonly NetLeaderEntry[] = [];
+  private readonly stopListening: () => void;
+
   constructor(spec: BoardSpec, width: number, height: number) {
     this.spec = spec;
     this.category = spec.category;
@@ -329,13 +334,22 @@ class PanelSurface {
     this.mesh = new Mesh(this.geometry, this.material);
 
     this.draw([]);
+
+    // A profile picture arrives after the row that shows it was drawn; redraw
+    // then, but only if this board is actually showing that picture.
+    this.stopListening = onThumbnailLoaded(() => {
+      if (!this.rows.some((row) => row.pfp && thumbnail(row.pfp))) return;
+      this.draw(this.rows);
+      this.texture.needsUpdate = true;
+    });
   }
 
   apply(rows: readonly NetLeaderEntry[]): void {
-    const signature = rows.map((row) => `${row.handle}:${row.value}`).join('|');
+    const signature = rows.map((row) => `${row.name}\u0001${row.pfp}:${row.value}`).join('|');
     if (signature === this.signature && this.placeholder === 'No scores yet') return;
     this.signature = signature;
     this.placeholder = 'No scores yet';
+    this.rows = rows;
     this.draw(rows);
     this.texture.needsUpdate = true;
   }
@@ -354,6 +368,7 @@ class PanelSurface {
   }
 
   dispose(): void {
+    this.stopListening();
     this.texture.dispose();
     this.material.dispose();
     this.geometry.dispose();
@@ -395,9 +410,12 @@ class PanelSurface {
     const rowTop = headerH;
     const rowH = (height - headerH - pad * 0.6) / LEADERBOARD_SIZE;
     const rankX = pad;
-    const handleX = pad + width * 0.13;
+    // [rank] [picture] [display name] ........ [figure]
+    const avatarR = rowH * 0.4;
+    const avatarX = pad + width * 0.13 + avatarR;
+    const nameX = avatarX + avatarR + width * 0.025;
     const valueRight = width - pad;
-    const handleRoom = valueRight - handleX - width * 0.2;
+    const nameRoom = valueRight - nameX - width * 0.2;
 
     /*
      * An empty board has to LOOK empty on purpose.
@@ -408,7 +426,7 @@ class PanelSurface {
      * one has scored yet" and "this feature is dead", and on a newly deployed
      * server the first is what is actually true.
      */
-    if (!rows.some((row) => row && row.handle)) {
+    if (!rows.some((row) => row && row.name)) {
       ctx.textAlign = 'center';
       ctx.fillStyle = PALETTE.boardHeading;
       fitText(ctx, this.placeholder, width - pad * 2, rowH * 0.62);
@@ -429,7 +447,7 @@ class PanelSurface {
         ctx.fillStyle = PALETTE.boardStripe;
         ctx.fillRect(pad * 0.4, rowTop + rowH * i, width - pad * 0.8, rowH);
       }
-      if (!row || !row.handle) continue;
+      if (!row || !row.name) continue;
 
       ctx.textAlign = 'left';
       ctx.lineWidth = size * 0.16;
@@ -442,14 +460,27 @@ class PanelSurface {
       ctx.strokeText(rank, rankX, centreY);
       ctx.fillText(rank, rankX, centreY);
 
-      // Handle, shrunk to fit the space between the rank and the figure. It is
-      // the one field whose length is not ours to choose, so it is the one
-      // that has to give - and the figure beside it must never be pushed off
-      // the board by a long name.
-      fitText(ctx, row.handle, handleRoom, size, 'left');
+      // Their Bloxity profile picture - the real avatar thumbnail, or a
+      // silhouette until it loads or when they have none.
+      drawThumbnail(
+        ctx,
+        row.pfp,
+        avatarX,
+        centreY,
+        avatarR,
+        PALETTE.boardPanelEdge,
+        PALETTE.boardHeading,
+        PALETTE.boardInk,
+      );
+
+      // Their Bloxity display name, shrunk to fit the space between the
+      // picture and the figure. It is the one field whose length is not ours
+      // to choose, so it is the one that has to give - and the figure beside
+      // it must never be pushed off the board by a long name.
+      fitText(ctx, row.name, nameRoom, size, 'left');
       ctx.fillStyle = PALETTE.boardName;
-      ctx.strokeText(row.handle, handleX, centreY);
-      ctx.fillText(row.handle, handleX, centreY);
+      ctx.strokeText(row.name, nameX, centreY);
+      ctx.fillText(row.name, nameX, centreY);
 
       // The figure, right-aligned so the column reads down the page.
       const text = this.format(row.value);

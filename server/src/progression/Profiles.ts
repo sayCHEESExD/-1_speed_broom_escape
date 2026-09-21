@@ -52,6 +52,10 @@ export const snapshotOf = (player: PlayerState, appliedGrants: ReadonlySet<strin
   bestStage: player.bestStage,
   updatedAt: Date.now(),
   appliedGrants: [...appliedGrants].slice(-APPLIED_GRANTS_KEPT),
+  // Left OUT while unknown, rather than written as '': a guest whose Bloxity
+  // guest name has not arrived yet must not erase the name already stored.
+  ...(player.displayName ? { displayName: player.displayName } : {}),
+  ...(player.displayName ? { pfp: player.pfp } : {}),
 });
 
 /**
@@ -137,6 +141,10 @@ export const resolveAccount = async (
       const seed: StoredProfile = { ...(source as StoredProfile), migratedFrom: guestKey, updatedAt: Date.now() };
       delete seed.migratedTo;
       delete seed.appliedGrants;
+      // Progress moves to the account; the GUEST's name and picture do not.
+      // The account is shown as Bloxity names it, from its own verify reply.
+      delete seed.displayName;
+      delete seed.pfp;
 
       if (await storage.insertIfAbsent(key, seed)) {
         // Marked only NOW, after the account copy exists.

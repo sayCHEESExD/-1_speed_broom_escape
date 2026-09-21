@@ -8,6 +8,7 @@ import {
   type SetAvatarMessage,
   type StageAwardedMessage,
   type SetIdentityMessage,
+  type SetGuestProfileMessage,
   type GuestIdMessage,
 } from '@broom/shared';
 import { Client, getStateCallbacks, type Room } from 'colyseus.js';
@@ -167,6 +168,30 @@ export class NetworkClient {
   /** The token the server was last told about for the current room ('' = signed out). */
   private sentToken = '';
 
+  /**
+   * Where the Bloxity GUEST name and picture come from - the SDK's own guest
+   * identity. Asked at join and sent again whenever it changes. The server
+   * shows it only while the player is signed out, after checking it; a
+   * signed-in player's name comes from Bloxity's verify reply instead.
+   */
+  setGuestProvider(provider: () => SetGuestProfileMessage | null): void {
+    this.guest = provider;
+  }
+
+  /** Send the current guest identity if it changed. A no-op outside a room. */
+  sendGuestProfile(): void {
+    const profile = this.guest?.() ?? null;
+    if (!this.room || !profile) return;
+    const key = `${profile.name}\u0000${profile.pfp}`;
+    if (key === this.sentGuest) return;
+    this.sentGuest = key;
+    this.room.send(MessageType.SetGuestProfile, profile);
+  }
+
+  private guest: (() => SetGuestProfileMessage | null) | null = null;
+  /** The guest identity last sent to the current room, as a comparison key. */
+  private sentGuest = '';
+
   get sessionId(): string | null {
     return this.room?.sessionId ?? null;
   }
@@ -215,6 +240,7 @@ export class NetworkClient {
     this.client ??= new Client(clientConfig.serverUrl);
     const playerId = resolvePlayerId();
     const token = this.identity?.() ?? '';
+    const guest = this.guest?.() ?? null;
     const attempts = JOIN_BACKOFF_MS.length + 1;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -228,9 +254,13 @@ export class NetworkClient {
           // Sent with the join rather than after it, so players already in the
           // room draw this one correctly from their very first patch.
           avatar: this.look?.() ?? undefined,
+          // The Bloxity guest identity, for while this player is signed out.
+          guestName: guest?.name,
+          guestPfp: guest?.pfp,
         });
         // What the server now knows, so an unchanged token is not re-sent.
         this.sentToken = token;
+        this.sentGuest = guest ? `${guest.name}\u0000${guest.pfp}` : '';
         break;
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
@@ -328,7 +358,7 @@ export class NetworkClient {
       const out: NetLeaderEntry[] = [];
       for (let i = 0; i < rows.length; i += 1) {
         const row = rows[i];
-        if (row) out.push({ handle: row.handle, value: row.value });
+        if (row) out.push({ name: row.name, pfp: row.pfp, value: row.value });
       }
       return out;
     };

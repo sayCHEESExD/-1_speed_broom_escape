@@ -551,8 +551,9 @@ impossible. Obstacle offsets are written as fractions of the corridor through
 wall of the arena, ranking Wins, Speed and Rebirths. Every figure is the
 server's - stored profiles merged with live player state, live winning wherever
 both exist - and ranked on the server, on a slow timer, because nobody reads a
-leaderboard twenty times a second. Players have no names, so a handle is
-derived from their id deterministically; the id itself never leaves the server.
+leaderboard twenty times a second. Each row shows the player's Bloxity
+profile picture and Bloxity display name - the same name that floats over
+their rider - and never an id, which stays on the server.
 
 **Every sound effect is synthesised**, with oscillators and envelopes: one
 context, a per-sound cooldown and a hard voice ceiling on the one-shots, and

@@ -494,9 +494,11 @@ METER** beneath them at the very bottom edge.
 
 Three world-space boards on the BACK WALL of the vault, which is what that wall
 was deliberately left empty for. Every figure is the SERVER's; rebuilt on a
-slow timer; the replicated arrays are FIXED-LENGTH and written in place;
-handles are DERIVED from the player id by `handleFor` so nothing is stored and
-nothing can be asserted.
+slow timer; the replicated arrays are FIXED-LENGTH and written in place.
+Each row is `[Bloxity profile picture] Bloxity display name  value`, ranked by
+PROFILE KEY (so two players sharing a name are two rows) - see "Player names".
+Pictures are drawn by `AvatarThumbnails`, loaded `crossOrigin='anonymous'` so
+a CORS-less picture fails to a silhouette instead of tainting the canvas.
 
 ## Audio
 
@@ -613,6 +615,37 @@ switch, and there are NO test switches in production code.
   holds it, applies it, writes the profile durably, and only then marks the
   grant applied. A claim abandoned by a dead pod is reclaimable after
   `GRANT_CLAIM_TIMEOUT_MS`, and `appliedGrants` stops a double payment.
+
+## Player names
+
+**Every visible player name is the player's BLOXITY display name, and every
+player picture is their Bloxity profile picture.** Name tags over riders, the
+scoreboards, the portal's friend-joined toast - anywhere a player is named.
+There is no identity system of this game's own, and there must not be one:
+the generated `@Adjective_Noun_1234` handles (`handleFor`) are gone.
+
+- **Never shown:** an `@username`, the account id, the profile key, the
+  guest's browser id, a session id, or anything derived from them. Those stay
+  internal, for networking and persistence.
+- **Signed in:** the name (`displayName`, else `username` WITHOUT an `@`) and
+  picture come from Bloxity's own token-verify reply - the same reply that
+  proves the account id, and the same record the SDK shows the player. The
+  server refreshes them whenever a token for that account is verified.
+- **Guest:** the identity Bloxity's SDK mints (`auth.getGuest()`, e.g.
+  "Comet42"), sent by the browser (`SetGuestProfile`, and at join). It is the
+  one name the server takes on trust, so it must be GUEST-SHAPED
+  (`isBloxityGuestName`) - a guest cannot call themselves "Chicken 877" - and
+  its picture must be on Bloxity's thumbnail CDN. Otherwise: "Guest". It is
+  kept while signed in and shown the moment the player signs out.
+- `CourseRoom.applyDisplay` is the ONE place a player's shown name and
+  picture are decided; they replicate as `PlayerState.displayName`/`pfp`,
+  written only by the server.
+- They are saved with the profile (`displayName`, `pfp`) purely so the boards
+  can name OFFLINE players. Never read to identify anyone. A guest's name is
+  NOT carried into an account on migration.
+- `shared/src/config/playerNames.ts` holds the cleaning and validation, used by
+  both halves. `NameTag` draws the tag over every rider - local and remote,
+  one code path through `Mount.setName`.
 
 ## Bloxity
 

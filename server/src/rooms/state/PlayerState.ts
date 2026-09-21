@@ -103,6 +103,18 @@ export class PlayerState extends Schema {
    */
   @type(AvatarState) avatar = new AvatarState();
 
+  /**
+   * What every client shows this player as: their Bloxity display name, and
+   * their Bloxity profile picture (a URL, '' for none).
+   *
+   * Written ONLY by the server - from Bloxity's verify reply for a signed-in
+   * player, from the checked Bloxity guest identity for a guest (see
+   * `shared/src/config/playerNames.ts`). Display only: nothing identifies,
+   * rewards or persists a player by it. The internal ids never appear here.
+   */
+  @type('string') displayName = '';
+  @type('string') pfp = '';
+
   /** Server-authoritative progression. */
   @type('uint32') level = 1;
   /**

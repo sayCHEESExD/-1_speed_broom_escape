@@ -13,7 +13,7 @@ export * from './config/flight.js';
 export * from './config/guardian.js';
 export * from './config/movement.js';
 export * from './config/progression.js';
-export * from './config/handles.js';
+export * from './config/playerNames.js';
 export * from './config/rebirth.js';
 export * from './config/trails.js';
 export * from './config/speed.js';

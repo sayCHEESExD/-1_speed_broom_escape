@@ -4,8 +4,10 @@ import { PlayerState } from './PlayerState.js';
 
 /** One row of one board: who, and how much. */
 export class LeaderEntry extends Schema {
-  /** Derived from the player's id on the server. Empty means an empty row. */
-  @type('string') handle = '';
+  /** The player's Bloxity display name. Empty means an empty row. */
+  @type('string') name = '';
+  /** Their Bloxity profile picture URL; '' draws a silhouette. */
+  @type('string') pfp = '';
   @type('float64') value = 0;
 }
 

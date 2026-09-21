@@ -108,6 +108,8 @@ export class RemotePlayer {
 
     this.mount.setBroomSlot(state.broomSlot);
     this.mount.setTrailSlot(state.trailSlot);
+    // Their Bloxity display name, as the server replicated it.
+    this.mount.setName(state.displayName);
     this.dressFrom(state);
 
     if (this.lastDeathCount >= 0 && state.deathCount > this.lastDeathCount) {

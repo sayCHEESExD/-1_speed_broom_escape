@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { accountDisplayName, cleanPfpUrl } from '@broom/shared';
 import { serverConfig } from '../config/serverConfig.js';
 import { logger } from '../util/logger.js';
 
@@ -50,8 +51,19 @@ const ACCOUNT_ID = /^[A-Za-z0-9_-]{1,64}$/;
  *                  an outage must not quietly turn signed-in players into
  *                  guests for the rest of their session.
  */
+/**
+ * How Bloxity says a verified player should be SHOWN: their display name and
+ * profile picture, taken from the same verify reply that proved who they are.
+ * Display only - the account id is what identifies them.
+ */
+export interface AccountProfile {
+  readonly displayName: string;
+  /** '' when the reply carried no usable picture. */
+  readonly pfp: string;
+}
+
 export type IdentityResult =
-  | { readonly status: 'verified'; readonly accountId: string }
+  | { readonly status: 'verified'; readonly accountId: string; readonly profile: AccountProfile }
   | { readonly status: 'rejected' }
   | { readonly status: 'unavailable' };
 
@@ -146,7 +158,17 @@ export class BloxityIdentity {
         return UNAVAILABLE;
       }
 
-      const result: IdentityResult = { status: 'verified', accountId: id };
+      // The name and picture come from the SAME reply, so they are exactly as
+      // authoritative as the id: Bloxity's own record of this account, which
+      // is also what the SDK shows the player about themselves.
+      const result: IdentityResult = {
+        status: 'verified',
+        accountId: id,
+        profile: {
+          displayName: accountDisplayName(user?.['displayName'], user?.['username']),
+          pfp: cleanPfpUrl(user?.['pfp'], 'account'),
+        },
+      };
       // Trusted for a few minutes, and never past the token's own expiry.
       const exp = tokenExpiry(token);
       const until = Math.min(Date.now() + VERIFIED_TTL_MS, exp ?? Number.POSITIVE_INFINITY);

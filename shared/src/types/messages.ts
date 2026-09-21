@@ -122,6 +122,12 @@ export interface SetIdentityMessage {
   token: string;
 }
 
+/** Client -> server: the Bloxity guest identity. See `MessageType.SetGuestProfile`. */
+export interface SetGuestProfileMessage {
+  name: string;
+  pfp: string;
+}
+
 /** Server -> client: this browser's new guest id. See `MessageType.GuestId`. */
 export interface GuestIdMessage {
   playerId: string;

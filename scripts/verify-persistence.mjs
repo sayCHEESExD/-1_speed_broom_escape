@@ -494,6 +494,97 @@ const runSuite = async (backend, mongod) => {
     await back.leave();
   }
 
+  // --------------------------------------------------------------- 10b
+  section('every player is shown by their Bloxity name and picture - never an id');
+  {
+    const accountPfp = 'https://static.bloxity.io/img/pfps/s1_h9.png?width=128&quality=85&v=2';
+    const guestPfp = 'https://static.bloxity.io/img/pfps/s4_h2.png?width=128&quality=85&v=2';
+    const account = await enter({ playerId: 'p_disp_a', token: 'ok.acct_disp' });
+    const guest = await enter({ playerId: 'p_disp_b', extra: { guestName: 'Comet42', guestPfp } });
+    const faker = await enter({
+      playerId: 'p_disp_c',
+      extra: { guestName: 'Chicken acct_disp', guestPfp: 'https://evil.example/pfp.png' },
+    });
+    const seen = (tab, other) => tab.room.state.players.get(other.room.sessionId);
+
+    check('a signed-in player is named by their Bloxity DISPLAY name', seen(account, account)?.displayName, 'Chicken acct_disp');
+    check('  with their Bloxity profile picture', seen(account, account)?.pfp, accountPfp);
+    await waitFor(
+      () => seen(guest, account)?.displayName && seen(account, guest)?.displayName && seen(account, faker)?.displayName,
+    );
+    check('OTHER players see that name too', seen(guest, account)?.displayName, 'Chicken acct_disp');
+    check('  and that picture', seen(guest, account)?.pfp, accountPfp);
+    check('a guest is named by their Bloxity guest name', seen(account, guest)?.displayName, 'Comet42');
+    check('  with their Bloxity guest picture', seen(account, guest)?.pfp, guestPfp);
+    check("a guest cannot take an account's name", seen(account, faker)?.displayName, 'Guest');
+    check('  nor show a picture from outside Bloxity', seen(account, faker)?.pfp, '');
+
+    guest.room.send('setGuestProfile', { name: 'Tiger7', pfp: guestPfp });
+    await waitFor(() => seen(account, guest)?.displayName === 'Tiger7');
+    check('a guest identity sent mid-session reaches everyone', seen(account, guest)?.displayName, 'Tiger7');
+    account.room.send('setGuestProfile', { name: 'Wolf9', pfp: '' });
+    await sleep(600);
+    check('a SIGNED-IN player cannot rename themselves', seen(guest, account)?.displayName, 'Chicken acct_disp');
+
+    const internal = [account, guest, faker].flatMap((tab) => [tab.room.sessionId]).concat([
+      'p_disp_a', 'p_disp_b', 'p_disp_c', 'acct_disp', 'bloxity:acct_disp',
+    ]);
+    const shown = [account, guest, faker].map((tab) => seen(account, tab)?.displayName ?? '');
+    check(
+      'no shown name is an id, a key or an @handle',
+      shown.every((name) => name && !name.startsWith('@') && !internal.includes(name) && !name.includes('bloxity:')),
+      true,
+    );
+
+    // The boards: name + picture per row, from the server.
+    await account.ride(1500);
+    const row = await waitFor(
+      () => [...account.room.state.leaderboard.speed].find((entry) => entry.name === 'Chicken acct_disp'),
+      8000,
+    );
+    check('the Speed board ranks the player by display name', row?.name, 'Chicken acct_disp');
+    check('  with their picture beside it', row?.pfp, accountPfp);
+    const names = [
+      ...account.room.state.leaderboard.wins,
+      ...account.room.state.leaderboard.speed,
+      ...account.room.state.leaderboard.rebirths,
+    ].map((entry) => entry.name).filter(Boolean);
+    check(
+      'no board row shows an @handle, an id or a profile key',
+      names.every((name) => !name.startsWith('@') && !name.includes('bloxity:') && !/^p_/.test(name)),
+      true,
+    );
+
+    // Signing out switches to the browser's Bloxity GUEST identity - the one
+    // it sent while signed in ("Wolf9"), kept but not shown until now.
+    account.identity('');
+    await waitFor(() => seen(guest, account)?.displayName === 'Wolf9', 10000);
+    check("signing out shows the browser's Bloxity guest name instead", seen(guest, account)?.displayName, 'Wolf9');
+    account.identity('ok.acct_disp');
+    await waitFor(() => seen(guest, account)?.displayName === 'Chicken acct_disp', 10000);
+    check('signing back in shows the account name again', seen(guest, account)?.displayName, 'Chicken acct_disp');
+
+    await account.leave();
+    const stored = await waitFor(async () => {
+      const p = await backend.read('bloxity:acct_disp');
+      return p?.displayName ? p : null;
+    });
+    check('the display name is saved with the profile', stored?.displayName, 'Chicken acct_disp');
+    check('  and the picture', stored?.pfp, accountPfp);
+    const migratedName = (await backend.read('bloxity:acct_new'))?.displayName;
+    check("a migrated account never inherits the guest's name", migratedName, 'Chicken acct_new');
+
+    // Offline: still ranked, still by name and picture.
+    const offlineRow = await waitFor(
+      () => [...guest.room.state.leaderboard.speed].find((entry) => entry.name === 'Chicken acct_disp'),
+      8000,
+    );
+    check('an OFFLINE player is still named on the board', offlineRow?.name, 'Chicken acct_disp');
+    check('  with their picture', offlineRow?.pfp, accountPfp);
+    await guest.leave();
+    await faker.leave();
+  }
+
   if (backend.kind === 'mongo' && mongod) {
     // ------------------------------------------------------------- 11
     section('database down -> joins refused, never fresh; back -> intact');

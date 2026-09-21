@@ -111,6 +111,17 @@ export const MessageType = {
    * there is. It is sanitised on arrival and it never touches progression.
    */
   SetAvatar: 'setAvatar',
+  /**
+   * Client -> server: "while I am signed OUT, Bloxity calls me THIS".
+   *
+   * The guest identity Bloxity's SDK mints in the browser - a name like
+   * "Comet42" and a picture of the guest's avatar - which is the only place a
+   * guest's name exists. Ignored for a signed-in player, whose name and
+   * picture the server takes from Bloxity's own verify reply instead. Checked
+   * on arrival: the name must be guest-shaped and the picture must be on
+   * Bloxity's thumbnail CDN (see `shared/src/config/playerNames.ts`).
+   */
+  SetGuestProfile: 'setGuestProfile',
 } as const;
 
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];

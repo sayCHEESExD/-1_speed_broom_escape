@@ -301,9 +301,22 @@ export class Game {
     // And every login or logout after the join. The bridge's one
     // `onUserChanged` fans out here; it fires once immediately, before there is
     // a room, which `sendIdentity` correctly ignores.
-    this.unsubscribeIdentity = this.bloxity.onUserChanged(() =>
-      this.network.sendIdentity(this.bloxity.getToken()),
-    );
+    this.unsubscribeIdentity = this.bloxity.onUserChanged(() => {
+      this.network.sendIdentity(this.bloxity.getToken());
+      // Signed out (or not yet signed in): the SDK's guest name and picture,
+      // which the server shows for a guest. Signed in, there is none to send
+      // - the server names the player from Bloxity's own verify reply.
+      this.network.sendGuestProfile();
+    });
+    /*
+     * The Bloxity GUEST identity, for while this player is signed out. The
+     * SDK mints it; the server checks its shape before anyone sees it.
+     */
+    this.network.setGuestProvider(() => {
+      const guest = this.bloxity.getGuest();
+      if (!guest) return null;
+      return { name: guest.displayName || guest.username || '', pfp: guest.pfp ?? '' };
+    });
     // Asked for at JOIN time rather than pushed after it, so the room has this
     // player's appearance in the very first patch everyone else receives.
     this.network.setLookProvider(() =>
@@ -614,11 +627,14 @@ export class Game {
       return;
     }
     this.remotePlayers.add(sessionId, state);
-    // The portal draws the "your friend just joined" toast; it only needs to
-    // be told who. The session id is all this game has for a stranger, which
-    // is exactly what it is - a handle, not a name it invented.
-    this.bloxity.playerJoined(sessionId);
-    this.bloxity.playerInRoom(sessionId);
+    // The portal draws the "your friend just joined" toast, matching the name
+    // it is given against the player's friends by username OR display name -
+    // so it is given the Bloxity display name the server replicated. (It used
+    // to be given the session id, which can never match a friend.)
+    if (state.displayName) {
+      this.bloxity.playerJoined(state.displayName);
+      this.bloxity.playerInRoom(state.displayName);
+    }
   }
 
   private onPlayerChanged(sessionId: string, state: NetPlayerState): void {
@@ -667,6 +683,8 @@ export class Game {
     }
 
     player.setTrailSlot(state.trailSlot);
+    // The local rider carries their own name too, exactly as others see it.
+    player.mount.setName(state.displayName);
 
     this.hud.update(state.totalSpeed, state.maxLevel, state.rebirths);
     // The stands need the level too: a broom that is affordable and a

@@ -1,4 +1,4 @@
-import { broomForSlot, type BroomAnimationState } from '@broom/shared';
+import { MOUNT_HEIGHT, broomForSlot, type BroomAnimationState } from '@broom/shared';
 import { Group, Mesh, Object3D } from 'three';
 import { BroomModel } from '../broom/BroomModel.js';
 import { BroomAnimator } from '../animation/BroomAnimator.js';
@@ -7,7 +7,11 @@ import { RiderAnimator } from '../animation/RiderAnimator.js';
 import { PlayerRig } from '../animation/rig/PlayerRig.js';
 import { PLAYER_MODEL_YAW_OFFSET } from '../config/worldVisuals.js';
 import { playerModelLoader } from './PlayerModelLoader.js';
+import { NameTag } from './NameTag.js';
 import { TrailEffect } from './TrailEffect.js';
+
+/** Gap between the top of the rider's head and their name tag, in world units. */
+const NAME_TAG_CLEARANCE = 0.85;
 
 /**
  * One player: an broom, and the person riding it.
@@ -43,6 +47,12 @@ export class Mount {
 
   /** The ribbon the equipped trail leaves behind. */
   readonly trail = new TrailEffect();
+
+  /**
+   * The player's Bloxity display name, floating over the rider. Created on the
+   * first non-empty name, so a mount nobody has named carries no sprite.
+   */
+  private nameTag: NameTag | null = null;
 
   broom: BroomModel;
   broomAnimator: BroomAnimator;
@@ -209,6 +219,22 @@ export class Mount {
     );
   }
 
+  /**
+   * Show this player's name over the rider - the Bloxity display name the
+   * server replicated, and nothing else. '' hides it.
+   */
+  setName(name: string): void {
+    if (!this.nameTag) {
+      if (!name) return;
+      this.nameTag = new NameTag();
+      // On the ROOT, not the broom's body: a name that bobbed and pitched
+      // with the broom would be hard to read and would swim on screen.
+      this.nameTag.sprite.position.y = MOUNT_HEIGHT + NAME_TAG_CLEARANCE;
+      this.root.add(this.nameTag.sprite);
+    }
+    this.nameTag.setName(name);
+  }
+
   get animationState(): BroomAnimationState {
     return this.broomAnimator.currentState;
   }
@@ -231,6 +257,7 @@ export class Mount {
   dispose(): void {
     this.broom.dispose();
     this.trail.dispose();
+    this.nameTag?.dispose();
     this.root.removeFromParent();
     this.worldRoot.removeFromParent();
   }

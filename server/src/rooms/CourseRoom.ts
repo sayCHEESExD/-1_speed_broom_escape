@@ -19,9 +19,18 @@ import {
   sanitizeProportions,
   type SetAvatarMessage,
   type SetIdentityMessage,
+  type SetGuestProfileMessage,
   type GuestIdMessage,
+  GUEST_FALLBACK_NAME,
+  cleanDisplayName,
+  cleanPfpUrl,
+  isBloxityGuestName,
 } from '@broom/shared';
-import { bloxityIdentity, type IdentityResult } from '../bloxity/BloxityIdentity.js';
+import {
+  bloxityIdentity,
+  type AccountProfile,
+  type IdentityResult,
+} from '../bloxity/BloxityIdentity.js';
 import { StorageUnavailableError, storage } from '../persistence/index.js';
 import {
   applyProfile,
@@ -101,7 +110,36 @@ interface Session {
   timer: NodeJS.Timeout | null;
   /** True while purchases are being applied. */
   granting: boolean;
+  /**
+   * How Bloxity's verify reply says the ACCOUNT should be shown - refreshed
+   * every time a token for it is verified. Null while signed out.
+   */
+  accountProfile: AccountProfile | null;
+  /** The browser's Bloxity guest identity, checked. Used only while signed out. */
+  guestProfile: GuestProfile;
 }
+
+/** A guest's name and picture, as Bloxity's SDK minted them, after checking. */
+interface GuestProfile {
+  /** '' until the browser has sent a guest-shaped name. */
+  name: string;
+  pfp: string;
+}
+
+/**
+ * Check a browser-sent Bloxity guest identity.
+ *
+ * The name must have the shape Bloxity gives guests ("Comet42"), so a
+ * signed-out player cannot pass as somebody's account; the picture must be on
+ * Bloxity's thumbnail CDN. Anything else is dropped rather than repaired.
+ */
+const checkGuestProfile = (name: unknown, pfp: unknown): GuestProfile => {
+  const cleaned = cleanDisplayName(name);
+  return {
+    name: isBloxityGuestName(cleaned) ? cleaned : '',
+    pfp: cleanPfpUrl(pfp, 'guest'),
+  };
+};
 
 /** Options a client may pass on join. Both are cosmetic or identity only. */
 /**
@@ -120,7 +158,6 @@ interface JoinAuth {
 
 interface JoinOptions {
   playerId?: string;
-  name?: string;
   /**
    * The player's Bloxity TOKEN, when they are signed in to the portal.
    *
@@ -135,6 +172,13 @@ interface JoinOptions {
    * follow-up message has made the round trip.
    */
   avatar?: SetAvatarMessage;
+  /**
+   * The browser's Bloxity GUEST name and picture, when it has them. Only ever
+   * shown while the player is signed out, and only after checking - see
+   * `checkGuestProfile`. A signed-in player's name comes from Bloxity.
+   */
+  guestName?: string;
+  guestPfp?: string;
 }
 
 /**
@@ -226,6 +270,9 @@ export class CourseRoom extends Room<CourseState> {
     );
     this.onMessage(MessageType.SetAvatar, (client, message: SetAvatarMessage) =>
       this.onSetAvatar(client, message),
+    );
+    this.onMessage(MessageType.SetGuestProfile, (client, message: SetGuestProfileMessage) =>
+      this.onSetGuestProfile(client, message),
     );
     this.onMessage(MessageType.EquipTrail, (client, message: EquipTrailMessage) =>
       this.onEquipTrail(client, message),
@@ -353,10 +400,14 @@ export class CourseRoom extends Room<CourseState> {
       retryDelay: REVERIFY_MIN_MS,
       timer: null,
       granting: false,
+      accountProfile: auth.identity?.status === 'verified' ? auth.identity.profile : null,
+      guestProfile: checkGuestProfile(options.guestName, options.guestPfp),
     };
     this.sessions.set(client.sessionId, session);
     this.profileKeys.set(client.sessionId, session.profileKey);
 
+    // Named BEFORE the player is added, so no client ever sees them nameless.
+    this.applyDisplay(session, player);
     this.state.players.set(client.sessionId, player);
     this.initialiseProgress(client.sessionId, player);
     if (options.avatar) this.writeAvatar(player, options.avatar);
@@ -615,7 +666,7 @@ export class CourseRoom extends Room<CourseState> {
     session.busy = true;
     try {
       if (!token) {
-        if (session.accountId) await this.switchProfile(sessionId, null);
+        if (session.accountId) await this.switchProfile(sessionId, null, null);
         return;
       }
       const result = await bloxityIdentity.verify(token);
@@ -624,11 +675,17 @@ export class CourseRoom extends Room<CourseState> {
 
       if (result.status === 'verified') {
         if (session.accountId !== result.accountId) {
-          await this.switchProfile(sessionId, result.accountId);
+          await this.switchProfile(sessionId, result.accountId, result.profile);
+        } else {
+          // The same account again: nothing to switch, but Bloxity's reply is
+          // the freshest word on its name and picture, so they are refreshed.
+          session.accountProfile = result.profile;
+          const player = this.state.players.get(sessionId);
+          if (player) this.applyDisplay(session, player);
         }
       } else if (result.status === 'rejected') {
         // A token Bloxity refuses is a sign-out, as far as this session goes.
-        if (session.accountId) await this.switchProfile(sessionId, null);
+        if (session.accountId) await this.switchProfile(sessionId, null, null);
       } else {
         // Unavailable: stay exactly where we are, and ask again later.
         this.scheduleReverify(sessionId, token);
@@ -675,7 +732,11 @@ export class CourseRoom extends Room<CourseState> {
    * If storage fails at any point before step 4, the session STAYS on the
    * profile it was on - nothing is applied halfway.
    */
-  private async switchProfile(sessionId: string, accountId: string | null): Promise<void> {
+  private async switchProfile(
+    sessionId: string,
+    accountId: string | null,
+    accountProfile: AccountProfile | null,
+  ): Promise<void> {
     const session = this.sessions.get(sessionId);
     const player = this.state.players.get(sessionId);
     const client = this.clients.find((c) => c.sessionId === sessionId);
@@ -711,7 +772,9 @@ export class CourseRoom extends Room<CourseState> {
       applyProfile(player, resolution.profile);
       session.profileKey = resolution.key;
       session.accountId = accountId;
+      session.accountProfile = accountId ? accountProfile : null;
       session.appliedGrants = new Set(resolution.profile?.appliedGrants ?? []);
+      this.applyDisplay(session, player);
       this.profileKeys.set(sessionId, resolution.key);
       if (resolution.newGuestKey) {
         session.guestKey = resolution.newGuestKey;
@@ -732,6 +795,42 @@ export class CourseRoom extends Room<CourseState> {
 
     if (session.accountId) await this.applyGrants(sessionId);
     this.save(session, player);
+  }
+
+  /**
+   * The browser's Bloxity guest identity arrived or changed.
+   *
+   * Stored whatever the session is, so it is ready the moment the player signs
+   * out; SHOWN only while they are a guest. See `checkGuestProfile`.
+   */
+  private onSetGuestProfile(client: Client, message: SetGuestProfileMessage): void {
+    const session = this.sessions.get(client.sessionId);
+    const player = this.state.players.get(client.sessionId);
+    if (!session || !player) return;
+    session.guestProfile = checkGuestProfile(message?.name, message?.pfp);
+    this.applyDisplay(session, player);
+  }
+
+  /**
+   * What everybody sees this player as. The ONE place it is decided.
+   *
+   * Signed in: exactly what Bloxity's verify reply said. Signed out: the
+   * checked Bloxity guest identity, or "Guest" until the browser has sent it.
+   * Never an id, a profile key or anything derived from one.
+   */
+  private applyDisplay(session: Session, player: PlayerState): void {
+    let name: string;
+    let pfp: string;
+    if (session.accountId && session.accountProfile) {
+      name = session.accountProfile.displayName;
+      pfp = session.accountProfile.pfp;
+    } else {
+      name = session.guestProfile.name || GUEST_FALLBACK_NAME;
+      pfp = session.guestProfile.pfp;
+    }
+    // Assign only on a real change: an identical write is still a patch.
+    if (player.displayName !== name) player.displayName = name;
+    if (player.pfp !== pfp) player.pfp = pfp;
   }
 
   /** Sanitise, then write in place. The one path an appearance is set by. */

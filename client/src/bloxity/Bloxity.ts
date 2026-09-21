@@ -7,6 +7,7 @@ import type {
   LegionProportions,
   LegionPurchaseResult,
   LegionSdk,
+  LegionGuest,
   LegionUser,
 } from './legionTypes.js';
 
@@ -181,6 +182,14 @@ export class Bloxity {
 
   getUser(): LegionUser | null {
     return guard('auth.getUser', (api) => api.auth?.getUser?.() ?? null) ?? null;
+  }
+
+  /**
+   * The SDK's guest identity - name and picture - while nobody is signed in;
+   * null when a user is (their name comes from Bloxity via the server).
+   */
+  getGuest(): LegionGuest | null {
+    return guard('auth.getGuest', (api) => api.auth?.getGuest?.() ?? null) ?? null;
   }
 
   getToken(): string | null {

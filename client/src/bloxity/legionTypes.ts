@@ -22,6 +22,18 @@ export interface LegionUser {
 }
 
 /**
+ * The signed-out identity the SDK mints for a guest: a generated name such as
+ * "Comet42" and a picture of the guest's avatar. `auth.getGuest()` returns it
+ * only while nobody is signed in.
+ */
+export interface LegionGuest {
+  readonly username: string;
+  readonly displayName?: string;
+  readonly pfp?: string;
+  readonly isGuest: true;
+}
+
+/**
  * A friend's presence.
  *
  * The status strings are spelled both ways in the wild - the docs say
@@ -94,6 +106,7 @@ export interface LegionSdk {
 
   auth?: {
     getUser(): LegionUser | null;
+    getGuest?(): LegionGuest | null;
     getToken(): string | null;
     isLoggedIn(): boolean;
     showAuthPopup(): Promise<LegionUser | null>;

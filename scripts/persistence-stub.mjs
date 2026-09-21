@@ -8,7 +8,8 @@
  * to the real network untouched. There is no test switch in production code.
  *
  * Tokens it understands (anything else is a forgery):
- *   ok.<accountId>   -> 200 { user: { _id: accountId } }   (as Bloxity answers)
+ *   ok.<accountId>   -> 200 { user: { _id, username, displayName, pfp } }
+ *                       (as Bloxity answers; displayName is "Chicken <id>")
  *   anything else    -> 401 GAME_TOKEN_INVALID
  * A request with the wrong gameSlug is refused (401), as the real one does.
  *
@@ -57,5 +58,14 @@ globalThis.fetch = async (input, init = {}) => {
 
   const match = /^ok\.([A-Za-z0-9_-]{1,64})$/.exec(token);
   if (!match) return json(401, { code: 'GAME_TOKEN_INVALID', error: 'The game capability is invalid or expired' });
-  return json(200, { user: { _id: match[1], username: `user_${match[1]}` } });
+  // Shaped like the real reply the SDK consumes: the account's display name
+  // and its profile picture on Bloxity's thumbnail CDN come back with the id.
+  return json(200, {
+    user: {
+      _id: match[1],
+      username: `user_${match[1]}`,
+      displayName: `Chicken ${match[1]}`,
+      pfp: `https://static.bloxity.io/img/pfps/s1_h${match[1].length}.png?width=128&quality=85&v=2`,
+    },
+  });
 };

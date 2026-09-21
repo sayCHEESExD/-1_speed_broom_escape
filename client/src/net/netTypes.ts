@@ -56,6 +56,14 @@ export interface NetPlayerState extends PlayerMotionState {
    * `shared/src/types/avatar.ts`.
    */
   avatar: AvatarAppearance & AvatarProportions;
+
+  /**
+   * What to CALL this player, and their picture: their Bloxity display name
+   * and profile picture URL, written by the server from Bloxity's own data.
+   * The only name any UI shows - never an id.
+   */
+  displayName: string;
+  pfp: string;
 }
 
 /** The replicated guardian. The one hazard that is state, not a formula. */
@@ -68,7 +76,10 @@ export interface NetGuardianState {
 
 /** One row of one leaderboard, exactly as the server ranked it. */
 export interface NetLeaderEntry {
-  handle: string;
+  /** The player's Bloxity display name. '' is an empty row. */
+  name: string;
+  /** Their Bloxity profile picture URL; '' draws a silhouette. */
+  pfp: string;
   value: number;
 }
 

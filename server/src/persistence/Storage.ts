@@ -52,6 +52,14 @@ export interface StoredProfile {
    * again, never ranked.
    */
   migratedTo?: string;
+  /**
+   * How the player was last SHOWN: their Bloxity display name and profile
+   * picture URL. Display only, kept so the leaderboards can name players who
+   * are not connected. Never read to identify anybody, never shown as an id,
+   * and refreshed from Bloxity every time the player is online.
+   */
+  displayName?: string;
+  pfp?: string;
   [unknownField: string]: unknown;
 }
 
@@ -69,6 +77,8 @@ export const SESSION_FIELDS = [
   'bestStage',
   'updatedAt',
   'appliedGrants',
+  'displayName',
+  'pfp',
 ] as const;
 
 /**

@@ -130,6 +130,50 @@ console.log('identity');
   check('an unwrapped user body is understood', result.status === 'verified' && result.accountId, 'acct_bare');
 }
 
+// -------------------------------------------------------- display identity
+/*
+ * What a player is SHOWN as comes from the same verify reply that proves who
+ * they are: Bloxity's display name and profile picture. Never the id, never
+ * an @handle.
+ */
+console.log('display identity');
+{
+  const pfp = 'https://static.bloxity.io/img/pfps/s3_h12.png?width=128&quality=85&v=2';
+  respond = () =>
+    json(200, { user: { _id: 'acct_chicken', username: 'chicken877', displayName: 'Chicken 877', pfp } });
+  const result = await new BloxityIdentity('slug').verify('named');
+  check('the verified profile carries the Bloxity DISPLAY name', result.profile?.displayName, 'Chicken 877');
+  check('  and the Bloxity profile picture', result.profile?.pfp, pfp);
+}
+{
+  respond = () => json(200, { user: { _id: 'acct_plain', username: 'plainuser' } });
+  const result = await new BloxityIdentity('slug').verify('plain');
+  check('no display name falls back to the username, WITHOUT an @', result.profile?.displayName, 'plainuser');
+  check('  and no picture is an empty picture', result.profile?.pfp, '');
+}
+{
+  respond = () =>
+    json(200, {
+      user: { _id: 'acct_odd', displayName: '  Two\u202e  Spaces\u0000 ', pfp: 'javascript:alert(1)' },
+    });
+  const result = await new BloxityIdentity('slug').verify('odd');
+  check('a display name is tidied (controls, bidi overrides, spacing)', result.profile?.displayName, 'Two Spaces');
+  check('  a non-https picture is dropped', result.profile?.pfp, '');
+}
+{
+  const shared = await import('../shared/dist/index.js');
+  check('a Bloxity guest name ("Comet42") is guest-shaped', shared.isBloxityGuestName('Comet42'), true);
+  check('an account-style name cannot pass as a guest name', shared.isBloxityGuestName('Chicken 877'), false);
+  check('  nor can an @handle', shared.isBloxityGuestName('@SwiftBroom_2F91'), false);
+  check(
+    'a guest picture on the Bloxity thumbnail CDN is kept',
+    shared.cleanPfpUrl('https://static.bloxity.io/img/pfps/s0.png?width=128', 'guest'),
+    'https://static.bloxity.io/img/pfps/s0.png?width=128',
+  );
+  check('  a guest picture from anywhere else is dropped', shared.cleanPfpUrl('https://evil.example/x.png', 'guest'), '');
+  check('the old generated @handles are gone from shared', typeof shared.handleFor, 'undefined');
+}
+
 /*
  * THREE outcomes. "Rejected" is Bloxity saying no; "unavailable" is Bloxity
  * not being askable - a guest for now, asked again later, never a verdict.
