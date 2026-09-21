@@ -11,8 +11,9 @@ broom or a trail. A better broom farms faster *and flies longer*. Hit the level
 cap and **Rebirth** for a permanent multiplier. Thirty stages, and dying on any
 of them puts you straight back at the vault.
 
-Three.js + Colyseus + TypeScript. No game engine, no audio files, almost no
-image assets, and a browser build of about **1.2 MB** against a 12 MB budget.
+Three.js + Colyseus + TypeScript. No game engine, one background music track,
+almost no image assets, and a browser build of about **2.9 MB** against a 12 MB
+budget.
 
 ---
 
@@ -480,11 +481,9 @@ a canvas at runtime. The only pictures in the build are the supplied rider
 model and three HUD icons — and one of those, the trophy, is also hung in the
 world over every win pad.
 
-**There is not one audio file either.** Every sound — the takeoff sweep, the
-thrust loop, the drain, the landing, the win fanfare — is synthesised from
-oscillators. There is no music yet, deliberately; the bus the portal's music
-slider is wired to exists with nothing on it, so adding a track later cannot
-start two copies of it.
+**Every sound effect is synthesised** — the takeoff sweep, the thrust loop,
+the drain, the landing, the win fanfare — from oscillators. The only audio
+file is the background music, `assets/audio/background.mp3`.
 
 **The brooms are built from boxes at load time.** One generic builder consumes
 each broom's proportions, palette and enchantment list, merges the result into

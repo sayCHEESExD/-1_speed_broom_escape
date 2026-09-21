@@ -30,7 +30,8 @@ engine. Do not add a framework or a build tool without a concrete need.
 
 ## Hard constraints
 
-- Final browser build must stay **under 12 MB**. It is currently ~1.2 MB.
+- Final browser build must stay **under 12 MB**. It is currently ~2.9 MB, of which the
+  background music track is 1.8 MB.
 - **Progression and rewards are server-authoritative.** The client may predict
   for UI feel but never decides, computes or claims a reward. That includes the
   flight meter.
@@ -43,11 +44,12 @@ engine. Do not add a framework or a build tool without a concrete need.
   `--port 2569` explicitly, because a dev harness that hosts the client often
   exports `PORT` for its own web server and the game server would otherwise
   bind to it.
-- **There is NO MUSIC and there are no audio files at all.** Not "not yet
-  wired" — this build ships zero bytes of audio. Every sound is synthesised
-  from oscillators. `musicBus` and `startMusic` are kept as empty structure so
-  the portal's music slider stays wired to something and so adding a track
-  later cannot start two copies of it.
+- **ONE audio file: the background music, `assets/audio/background.mp3`.**
+  Every sound EFFECT is still synthesised from oscillators - no sampled
+  one-shots. The track is STREAMED (an `<audio>` element, never decoded into
+  a buffer), looped, started once from the first user gesture by
+  `startMusic`, and routed through `musicBus`, so the portal's music and
+  master sliders and the in-game mute all apply to it. Mute PAUSES it.
 
 ## Flight — the mechanic this game is
 
@@ -502,8 +504,8 @@ a CORS-less picture fails to a silhouette instead of tainting the canvas.
 
 ## Audio
 
-In `client/src/audio/`. **Every** sound is synthesised — there is not one audio
-file in this build.
+In `client/src/audio/`. Every sound EFFECT is synthesised; the one recorded
+file is the background music (see Hard constraints).
 
 - The **thrust loop** is the important one: a soft thud retriggered on a fixed
   CLOCK while the meter is being spent. A hoofbeat belonged to distance because
@@ -808,6 +810,5 @@ dungeon is authored around elevation so flight cannot be outrun, the training
 hall is three tiers of two, the win pads are on the player's left with the
 supplied trophy over them, and the Bloxity integration carried over intact.
 
-**Not built yet, and out of scope until the milestone advances:** music,
-powers, the free-reward chest, the buy-Speed buttons and the "2x Wins"
+**Not built yet, and out of scope until the milestone advances:** powers, the free-reward chest, the buy-Speed buttons and the "2x Wins"
 gamepass.

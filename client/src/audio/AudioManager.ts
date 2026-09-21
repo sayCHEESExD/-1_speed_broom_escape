@@ -1,3 +1,4 @@
+import { ASSET_PATHS } from '../config/assets.js';
 import { logger } from '../util/logger.js';
 
 const SCOPE = 'audio';
@@ -7,18 +8,10 @@ const MUSIC_GAIN = 0.55;
 const SFX_GAIN = 0.34;
 
 /*
- * THERE IS NO MUSIC IN THIS GAME, and that is a deliberate decision rather
- * than an unfinished one.
- *
- * The previous game streamed a supplied track through `musicBus`. This one
- * ships no audio files at all: no track, and no sampled one-shots either. Every
- * sound below is synthesised from oscillators, which costs bytes measured in
- * hundreds against a 12 MB budget.
- *
- * `musicBus` itself is KEPT. It is what the portal's `music_volume` slider is
- * wired to, and a slider that silently controlled nothing would be worse than
- * one that controls a bus with no voice on it - the day a track is added, it
- * is one `startMusic` away and every volume control already works on it.
+ * ONE AUDIO FILE: the background track, `assets/audio/background.mp3`,
+ * streamed through `musicBus` - so the portal's `music_volume` slider, the
+ * master slider and the mute all work on it. Every sound EFFECT is still
+ * synthesised from oscillators; the track is the only recorded audio.
  */
 
 /**
@@ -69,16 +62,14 @@ export type SoundName =
 /**
  * Every sound in the game, synthesised.
  *
- * EVERY sound is synthesised - oscillators and envelopes cost bytes measured
- * in the hundreds, and a pack of wavs is the easiest way to spend the 12 MB
- * budget. There is no music and there are no samples: this build ships not one
- * audio file.
+ * Every sound EFFECT is synthesised - oscillators and envelopes cost bytes
+ * measured in the hundreds, and a pack of wavs is the easiest way to spend the
+ * 12 MB budget. The one recorded file is the background music track.
  *
  * THREE rules hold the whole thing together:
  *
- *  - ONE context, ONE music voice. There is no track yet, and the structure
- *    that would hold one - the `started` flag, `musicBus`, the single
- *    `startMusic` call - is kept so that adding one can never start two.
+ *  - ONE context, ONE music voice. The `started` flag and the single
+ *    `startMusic` call are what make a second copy of the track impossible.
  *  - ONE-SHOTS ARE BOUNDED, twice: a per-sound cooldown stops the same effect
  *    retriggering every frame, and a hard voice ceiling stops the mix from
  *    ever containing more than a dozen of them.
@@ -352,16 +343,40 @@ export class AudioManager {
   // -------------------------------------------------------------- the music
 
   /**
-   * Start the background track - which this game does not have.
+   * Start the background track: `assets/audio/background.mp3`, looped.
    *
-   * Deliberately empty, and deliberately still called. `musicBus` exists and
-   * carries the portal's music slider; there is simply no voice on it yet. The
-   * call site, the flag that makes a second copy impossible and the whole
-   * routing stay in place, so adding a track later is filling this in and
-   * nothing else.
+   * Called once, from the first real user gesture (`resume`), which is the
+   * only moment a browser will let it play. STREAMED through an element rather
+   * than decoded into a buffer (see `musicElement`), and routed into
+   * `musicBus`, so the portal's music and master sliders and the in-game mute
+   * all apply to it. A track that fails to load - blocked, offline - is logged
+   * and simply not heard; the game and its sound effects carry on.
    */
   private startMusic(): void {
-    // No track. See the note at the top of this file.
+    const ctx = this.context;
+    const bus = this.musicBus;
+    if (!ctx || !bus || this.musicElement) return;
+
+    const element = new Audio();
+    element.src = ASSET_PATHS.backgroundMusic;
+    element.loop = true;
+    element.preload = 'auto';
+    element.addEventListener('error', () => {
+      logger.warn(SCOPE, `background music failed to load (${ASSET_PATHS.backgroundMusic})`);
+    });
+
+    try {
+      this.musicSource = ctx.createMediaElementSource(element);
+      this.musicSource.connect(bus);
+    } catch (error) {
+      // Without Web Audio routing the sliders cannot reach it; better silent
+      // than playing at a volume the player cannot control.
+      logger.warn(SCOPE, `background music not routable: ${String(error)}`);
+      return;
+    }
+
+    this.musicElement = element;
+    if (!this.muted) void element.play().catch(() => undefined);
   }
 
   // --------------------------------------------------------- the one-shots

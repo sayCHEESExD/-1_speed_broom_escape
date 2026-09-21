@@ -16,6 +16,8 @@
 export const ASSET_PATHS = {
   playerModel: '/player/player.fbx',
   playerTexture: '/player/green.png',
+  /** The background music track, from the repo-level `assets/audio/`. */
+  backgroundMusic: '/audio/background.mp3',
 } as const;
 
 /**
