@@ -215,6 +215,29 @@ npm run build       # production build of all three workspaces
   a belt tier you have not levelled into, holding thrust for ever on a ten
   second tank, and launching on an empty one. All are refused.
 
+The Bloxity rules have their own static suite, run as part of `verify` and on
+its own with `npm run verify:bloxity`: the three identity outcomes, what is
+cached and for how long, and the webhook's status codes.
+
+Persistence has an end-to-end suite that is NOT part of `verify`, because it
+builds and starts real servers:
+
+```bash
+npm run verify:persistence                                  # JSON store only
+MONGOD_BIN=/path/to/mongod npm run verify:persistence       # + MongoDB, with outage tests
+MONGODB_URI=mongodb://127.0.0.1:27017/broom_test npm run verify:persistence
+```
+
+It boots the BUILT server with only Bloxity's verify URL stubbed, connects real
+clients, and reads the store directly: restores, guest-to-account migration and
+its races, signing in and out mid-session, grants paid exactly once, refused
+joins when storage is down, a crash and a restart. Without `MONGODB_URI` it
+tests the JSON store only. `MONGOD_BIN` adds MongoDB on a `mongod` the script
+starts, kills and restarts itself, which is what the outage tests need
+(`mongodb-memory-server` can supply the binary - install it outside this repo).
+`MONGODB_URI` tests an existing server without the outage tests - and **it WIPES
+that database**, so never point it at real data.
+
 And one that needs a running server:
 
 ```bash
@@ -246,7 +269,8 @@ Node host ──  @broom/server      Colyseus, one long-lived process
 ### 1. The game server
 
 Any host that runs a Node process and keeps a WebSocket open - Fly.io, Railway,
-Render, a VPS. It needs no database.
+Render, a VPS. Progress lives in MongoDB when `MONGODB_URI` is set, and in a
+JSON file otherwise - see "Persistence" below.
 
 ```bash
 npm ci
@@ -258,20 +282,64 @@ npm start --workspace @broom/server
 | ----------------- | ------ | ---------------------------------------------------- |
 | `PORT`            | no     | Port to bind. Managed hosts set this themselves; defaults to 2569. |
 | `HOST`            | no     | Interface to bind. Defaults to `0.0.0.0`, which is what a container needs. |
-| `BROOM_DATA_DIR`  | no     | Where profiles are written. Defaults to `data/` beside the server. |
+| `MONGODB_URI`     | **yes, in production** | The progress database. Bloxity Legion injects it. Unset, the server uses the JSON dev store. |
+| `BROOM_DATA_DIR`  | no     | Where the JSON dev store lives, and where a legacy `profiles.json` is imported from. Defaults to `data/` beside the server. |
 | `BLOXITY_WEBHOOK_SECRET` | **yes, in production** | Checked against the `x-legion-webhook-secret` header on `POST /bloxity/bux`. Without it, anyone who finds the endpoint can grant Wins. |
 | `BLOXITY_GAME_ID` | no     | The slug player tokens are verified against. Defaults to `speed-broom-escape`. On Bloxity Legion it is injected automatically, and must match the client's `VITE_BLOXITY_GAME_ID`. |
-| `BLOXITY_API_BASE`| no     | Where tokens are verified. Defaults to `https://api.bloxity.io`. |
 
 `GET /health` returns `{"ok":true,"room":"broomobby","rooms":N,"players":N}`
 for the host's health check. The room and player counts come from the
 matchmaker's own tally, which is what makes the 15-player limit and the
 close-when-empty rule observable from outside the process.
 
-> **Profiles are a JSON file on disk.** On a host with an ephemeral filesystem
-> - which is most of them - every redeploy wipes every player's progression.
-> Point `BROOM_DATA_DIR` at a mounted volume, or accept that the ladder resets
-> on each deploy.
+Bloxity's verify endpoint is a constant in `BloxityIdentity.ts`, not a
+setting: a server that could be pointed at another host would accept whatever
+that host said about who a player is.
+
+### Persistence
+
+| `MONGODB_URI` | Store | Survives |
+| --- | --- | --- |
+| set | **MongoDB** - collections `profiles` and `bux_grants` in the database the URI names | redeploys, restarts, scale-to-zero, and it is shared by every pod |
+| unset | **JSON dev store** - `profiles.json` and `grants.json` in `BROOM_DATA_DIR` | only as long as that directory does |
+
+On Bloxity Legion `MONGODB_URI` is injected per game and channel, so **progress
+persists there** with nothing to configure. The JSON store is for local
+development and for a single server with a mounted volume.
+
+How it behaves, whichever store is used:
+
+- **A profile is read from storage when the player JOINS**, never from a cache
+  taken at boot - another pod may have written it since. If it cannot be read,
+  the join is REFUSED ("progress storage is unavailable") rather than handed a
+  blank profile that would then be saved over the real one. The boot-time
+  cache feeds the leaderboards only, refreshed every minute.
+- **Writes never drop.** The newest snapshot per player is queued and written
+  idempotently, retried with backoff until it lands. Fields the server does not
+  know are preserved.
+- **The server boots with the database down.** `/health` keeps answering and
+  joins are refused cleanly until it is back.
+- **Shutdown drains, then flushes.** SIGTERM disposes the rooms (queuing every
+  remaining save), waits for the queue to land, then exits.
+- **A legacy `profiles.json`** in `BROOM_DATA_DIR` is imported into MongoDB on
+  every boot, insert-only, so it can never overwrite newer progress.
+- The JSON store writes atomically (temp file, fsync, rename), recovers a
+  complete leftover temp file, and MOVES a corrupt file aside as
+  `<file>.corrupt-<time>` instead of overwriting it.
+
+**Whose progress is it?** A signed-in player's profile is keyed
+`bloxity:<accountId>`, and the account id comes ONLY from Bloxity: the client
+sends its portal token and the server asks Bloxity who it belongs to. A guest's
+profile is keyed by the id their browser keeps. The first time a guest with
+progress signs in to an account that has none, the guest's progress becomes the
+account's and the guest profile is retired - it is never restored, migrated
+again or ranked. An account that already has progress keeps it. Signing in or
+out mid-session swaps profiles in place: the old one is saved first, the new
+one applied, and the player is returned to spawn.
+
+If Bloxity cannot be reached, a signed-in player plays as their guest for the
+moment and is re-verified in the background; an outage never demotes an
+account.
 
 ### 2. The client
 
@@ -352,12 +420,9 @@ One thing is NOT in the repository: after the first run, make the GHCR package
 public (repo -> Packages -> Package settings -> Change visibility), or Legion
 cannot pull the image.
 
-> [!WARNING]
-> Legion pods are ephemeral and the game scales to zero when idle, so the
-> `BROOM_DATA_DIR` JSON file does NOT survive there - `VOLUME` in a Dockerfile
-> asks Kubernetes for nothing. Legion injects `MONGODB_URI` for exactly this,
-> and until a `PersistenceAdapter` reads it, progression on Bloxity resets
-> whenever the last player leaves. See "Persistence" above.
+Legion pods are ephemeral and the game scales to zero when idle, but progress
+does not live in the pod: Legion injects `MONGODB_URI` and the server stores
+every profile and every Bux grant there. See "Persistence" above.
 
 ### 3. Check it
 
@@ -383,11 +448,19 @@ account chip reads "Playing offline"; nothing else changes.
 
 **Bux never grant anything on the client.** The client asks for a SKU - never a
 price - and the purchase is fulfilled server to server: Bloxity posts to
-`/bloxity/bux`, the server queues the grant against the Bloxity account, and the
-room hands it over through the same `wallet.add` every stage reward uses. The
-webhook answers 2xx for anything it has safely recorded, including a SKU this
-build does not know, because Bloxity refunds what fails and a catalogue that
-moved ahead of a deploy must not cost a player their purchase.
+`/bloxity/bux`, the server records the grant against the Bloxity account in
+storage, and the room hands it over through the same `wallet.add` every stage
+reward uses. The webhook answers 200 only once the grant is DURABLY recorded
+(and 200 again for a retry of the same transaction, which is paid once); 503 if
+storage cannot record it, and 422 for a SKU this build cannot fulfil - both
+unacknowledged, so Bloxity refunds rather than charging for nothing.
+
+A grant is paid **exactly once**, across pods and restarts: the transaction id
+is the grant's unique key, a room CLAIMS a grant before applying it, the profile
+remembers which grants it has applied, and the grant is marked applied only
+after the profile write has landed. A pod that dies mid-grant leaves a claim
+another room picks up two minutes later, and the profile's record stops it
+being paid twice.
 
 | Variable                  | Needed | Meaning                                        |
 | ------------------------- | ------ | ---------------------------------------------- |

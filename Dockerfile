@@ -10,8 +10,8 @@
 #
 # Bloxity's requirements for a backend image, all met here: listen on the PORT
 # it injects, answer GET /health quickly, run as a non-root user, and drain on
-# SIGTERM (server/src/index.ts shuts Colyseus down gracefully and flushes
-# profiles before exiting).
+# SIGTERM (server/src/index.ts drains the rooms, then flushes every queued
+# save to storage before exiting).
 
 # ---------------------------------------------------------------- build ----
 FROM node:20-alpine AS build
@@ -69,17 +69,21 @@ COPY --from=build /app/server/dist ./server/dist
 # logging "failed to write" on each save and persisting nothing.
 RUN mkdir -p /data && chown -R node:node /data
 
-# Profiles are a JSON file, and a container filesystem does not survive a
-# redeploy. Mount a volume here and every player's progression survives a
-# release - see `BROOM_DATA_DIR` in the README.
+# Where progress lives depends on ONE variable, read by
+# server/src/persistence/index.ts:
 #
-# ON BLOXITY LEGION THIS IS NOT ENOUGH, and the declaration below is honest
-# about what it can promise: `VOLUME` asks the Docker CLI for an anonymous
-# volume and asks Kubernetes for NOTHING. Legion runs pods that scale to zero
-# when the last player leaves, so /data goes with them. Legion injects
-# `MONGODB_URI` - an isolated database per game+channel - for exactly this
-# case, and until a `PersistenceAdapter` reads it, progression there lasts only
-# as long as a pod does.
+#   MONGODB_URI set    -> MongoDB. This is the production store. Bloxity Legion
+#                         injects it (an isolated database per game + channel),
+#                         so on Legion progress survives redeploys, restarts and
+#                         pods scaling to zero, and is shared by every pod.
+#   MONGODB_URI unset  -> the JSON dev store in BROOM_DATA_DIR (/data below).
+#                         Fine for `docker run` with a mounted volume; a
+#                         container filesystem alone does not survive a
+#                         redeploy, and `VOLUME` asks Kubernetes for nothing.
+#
+# A database that is down at boot does not stop the server: /health keeps
+# answering and joins are refused until it is back. See "Persistence" in the
+# README.
 ENV BROOM_DATA_DIR=/data
 VOLUME ["/data"]
 
@@ -97,6 +101,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||2569)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # Straight to node, with no npm wrapper: npm swallows signals, so a container
-# stopped by the host would not run the shutdown handler that flushes profiles
-# to disk.
+# stopped by the host would not run the shutdown handler that flushes queued
+# saves to storage.
 CMD ["node", "server/dist/index.js"]
