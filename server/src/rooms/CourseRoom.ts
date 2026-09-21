@@ -18,7 +18,9 @@ import {
   sanitizeAppearance,
   sanitizeProportions,
   type SetAvatarMessage,
+  type SetIdentityMessage,
 } from '@broom/shared';
+import { bloxityIdentity } from '../bloxity/BloxityIdentity.js';
 import { serverConfig } from '../config/serverConfig.js';
 import { MovementService } from '../movement/MovementService.js';
 import { BroomService } from '../progression/BroomService.js';
@@ -40,12 +42,33 @@ const SCOPE = 'CourseRoom';
 /** Seconds between autosaves of every connected player. */
 const AUTOSAVE_SECONDS = 15;
 
+/**
+ * Seconds a session must wait between two identity changes.
+ *
+ * Every one costs an outbound call to Bloxity, so a client that sent a stream
+ * of garbage tokens would be using this server to hammer a third party. A real
+ * player logs in or out a handful of times a session.
+ */
+const IDENTITY_COOLDOWN_MS = 2000;
+
 /** Options a client may pass on join. Both are cosmetic or identity only. */
+/** What `onAuth` resolved, handed to `onJoin` by Colyseus. */
+interface JoinAuth {
+  /** The VERIFIED Bloxity account id, or null for a guest. */
+  bloxityId: string | null;
+}
+
 interface JoinOptions {
   playerId?: string;
   name?: string;
-  /** The Bloxity account id, when the player is signed in to the portal. */
-  bloxityId?: string;
+  /**
+   * The player's Bloxity TOKEN, when they are signed in to the portal.
+   *
+   * Never an account id. The server verifies this with Bloxity in `onAuth` and
+   * binds only the id Bloxity returns - see `BloxityIdentity` for why a
+   * client-supplied id was a way to collect somebody else's purchases.
+   */
+  bloxityToken?: string;
   /**
    * The player's Bloxity appearance, so they are drawn correctly by everyone
    * already in the room from their very first patch rather than after a
@@ -114,6 +137,17 @@ export class CourseRoom extends Room<CourseState> {
    */
   private readonly bloxityIds = new Map<string, string>();
 
+  /**
+   * Per-session identity bookkeeping.
+   *
+   * `version` is bumped by every SetIdentity, and a verification only takes
+   * effect if it is still the latest one when it resolves - otherwise a slow
+   * check of an OLD token could land after a newer login and rebind the
+   * session to the account it had just left. `lastAt` is the rate limit.
+   */
+  private readonly identityVersions = new Map<string, number>();
+  private readonly identityLastAt = new Map<string, number>();
+
   /** Scratch motion, so the per-tick death check allocates nothing. */
   private readonly scratch: PlayerMotion = createMotion();
 
@@ -138,6 +172,9 @@ export class CourseRoom extends Room<CourseState> {
     this.onMessage(MessageType.Rebirth, (client) => this.onRebirth(client));
     this.onMessage(MessageType.BuyTrail, (client, message: BuyTrailMessage) =>
       this.onBuyTrail(client, message),
+    );
+    this.onMessage(MessageType.SetIdentity, (client, message: SetIdentityMessage) =>
+      void this.onSetIdentity(client, message),
     );
     this.onMessage(MessageType.SetAvatar, (client, message: SetAvatarMessage) =>
       this.onSetAvatar(client, message),
@@ -173,7 +210,7 @@ export class CourseRoom extends Room<CourseState> {
    * Nothing about this is client-side: a client cannot decline to call it and
    * cannot see the number it is compared against.
    */
-  override onAuth(): boolean {
+  override async onAuth(_client: Client, options: JoinOptions = {}): Promise<JoinAuth> {
     if (this.clients.length >= MAX_PLAYERS_PER_ROOM) {
       logger.warn(
         SCOPE,
@@ -182,10 +219,27 @@ export class CourseRoom extends Room<CourseState> {
       );
       throw new ServerError(4103, 'room is full');
     }
-    return true;
+
+    /*
+     * WHO this is, asked of Bloxity rather than of the client.
+     *
+     * Here rather than in `onJoin` because this is the one hook Colyseus lets
+     * be asynchronous before the player is admitted - so the player enters the
+     * room already bound to the right account, and there is no window in which
+     * a queued purchase could be applied to a session that has not been
+     * checked yet.
+     *
+     * A token that does not verify does NOT refuse the join. It admits a
+     * guest: the game is perfectly playable signed out, and a Bloxity outage
+     * must not become an outage of this game.
+     */
+    const bloxityId = options.bloxityToken
+      ? await bloxityIdentity.verify(options.bloxityToken)
+      : null;
+    return { bloxityId };
   }
 
-  override onJoin(client: Client, options: JoinOptions = {}): void {
+  override onJoin(client: Client, options: JoinOptions = {}, auth?: JoinAuth): void {
     const player = new PlayerState();
     player.sessionId = client.sessionId;
 
@@ -205,7 +259,9 @@ export class CourseRoom extends Room<CourseState> {
     this.speeds.initialise(player);
     this.stages.initialise(client.sessionId);
 
-    const bloxityId = typeof options.bloxityId === 'string' ? options.bloxityId : '';
+    // The id `onAuth` VERIFIED, and nothing from the join options. See
+    // `BloxityIdentity` for what trusting the client here used to allow.
+    const bloxityId = auth?.bloxityId ?? null;
     if (bloxityId) {
       this.bloxityIds.set(client.sessionId, bloxityId);
       // Anything bought while they were away, or in another session.
@@ -240,6 +296,8 @@ export class CourseRoom extends Room<CourseState> {
     this.speeds.forget(client.sessionId);
     this.stages.forget(client.sessionId);
     this.bloxityIds.delete(client.sessionId);
+    this.identityVersions.delete(client.sessionId);
+    this.identityLastAt.delete(client.sessionId);
     this.brooms.forget(client.sessionId);
     this.trails.forget(client.sessionId);
     this.playerIds.delete(client.sessionId);
@@ -385,6 +443,47 @@ export class CourseRoom extends Room<CourseState> {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
     this.writeAvatar(player, message);
+  }
+
+  /**
+   * The player signed in or out of Bloxity mid-session.
+   *
+   * Verified exactly as a join is - the token goes to Bloxity and only the id
+   * it answers with is bound - and an empty token unbinds. Without this a
+   * player who logged in after connecting would never receive a purchase until
+   * they reloaded, which is the most natural order to do those two things in.
+   *
+   * Rate limited, and a stale answer is discarded rather than applied: see
+   * `identityVersions`.
+   */
+  private async onSetIdentity(client: Client, message: SetIdentityMessage): Promise<void> {
+    const sessionId = client.sessionId;
+    const now = Date.now();
+    if (now - (this.identityLastAt.get(sessionId) ?? 0) < IDENTITY_COOLDOWN_MS) return;
+    this.identityLastAt.set(sessionId, now);
+
+    const version = (this.identityVersions.get(sessionId) ?? 0) + 1;
+    this.identityVersions.set(sessionId, version);
+
+    const token = typeof message?.token === 'string' ? message.token : '';
+    const bloxityId = token ? await bloxityIdentity.verify(token) : null;
+
+    // The player may have left, or sent a newer identity, while Bloxity was
+    // answering. Either way this answer describes a state that no longer
+    // exists and must not be applied.
+    const player = this.state.players.get(sessionId);
+    if (!player || this.identityVersions.get(sessionId) !== version) return;
+
+    if (!bloxityId) {
+      if (this.bloxityIds.delete(sessionId)) {
+        logger.info(SCOPE, `${sessionId} is no longer bound to a Bloxity account`);
+      }
+      return;
+    }
+
+    this.bloxityIds.set(sessionId, bloxityId);
+    logger.info(SCOPE, `${sessionId} bound to a verified Bloxity account`);
+    this.applyGrants(sessionId, player);
   }
 
   /** Sanitise, then write in place. The one path an appearance is set by. */

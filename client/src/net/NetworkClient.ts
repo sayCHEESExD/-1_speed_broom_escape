@@ -7,6 +7,7 @@ import {
   type RespawnMessage,
   type SetAvatarMessage,
   type StageAwardedMessage,
+  type SetIdentityMessage,
 } from '@broom/shared';
 import { Client, getStateCallbacks, type Room } from 'colyseus.js';
 import { clientConfig } from '../config/clientConfig.js';
@@ -132,8 +133,28 @@ export class NetworkClient {
     this.room?.send(MessageType.SetAvatar, message);
   }
 
+  /**
+   * Where the join's Bloxity TOKEN comes from.
+   *
+   * A token and never an account id: the server verifies it with Bloxity and
+   * binds only the id Bloxity answers with. Asked for at JOIN time rather than
+   * captured up front, so a player who signed in while the connection was
+   * still being made is sent in signed in.
+   */
   setIdentityProvider(provider: () => string | null): void {
     this.identity = provider;
+  }
+
+  /**
+   * The player signed in or out mid-session. `''` means signed out.
+   *
+   * A no-op while not in a room, which is correct rather than lossy: the next
+   * join asks the identity provider anyway, so nothing sent before then would
+   * have mattered.
+   */
+  sendIdentity(token: string | null): void {
+    const message: SetIdentityMessage = { token: token ?? '' };
+    this.room?.send(MessageType.SetIdentity, message);
   }
 
   get sessionId(): string | null {
@@ -189,9 +210,10 @@ export class NetworkClient {
       try {
         this.room = await this.client.joinOrCreate<NetCourseState>(ROOM_NAME, {
           playerId,
-          // Optional: a signed-out player simply has none, and the room falls
-          // back to the browser-stored id exactly as it always did.
-          bloxityId: this.identity?.() ?? undefined,
+          // The Bloxity TOKEN, verified by the server before it binds an
+          // account. Optional: a signed-out player simply has none, and the
+          // room falls back to the browser-stored id exactly as it always did.
+          bloxityToken: this.identity?.() ?? undefined,
           // Sent with the join rather than after it, so players already in the
           // room draw this one correctly from their very first patch.
           avatar: this.look?.() ?? undefined,

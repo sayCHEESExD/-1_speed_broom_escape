@@ -33,8 +33,17 @@ dist
 client/*
 !client/package.json
 
-# Player profiles are runtime state and belong on a mounted volume.
+# Player profiles are runtime state and belong on a mounted volume. Both
+# places a local run writes them: beside the server under `npm start`, and at
+# the repo root when `node server/dist/index.js` is run from here.
 server/data
+data
+
+# The client's static art and the repo's verification scripts. The server
+# image needs neither: the art ships with the client bundle to Bloxity
+# Hosting, and the scripts run in CI, not in the container.
+assets
+scripts
 
 *.log
 .env

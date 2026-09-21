@@ -5,8 +5,13 @@
 # a build context of `server/` alone has no `shared/` to resolve it against and
 # no root lockfile to install from.
 #
-#   docker build -t broom-obby-server .
-#   docker run -e PORT=2569 -p 2569:2569 broom-obby-server
+#   docker build -t speed-broom-escape-server .
+#   docker run -e PORT=2567 -p 2567:2567 speed-broom-escape-server
+#
+# Bloxity's requirements for a backend image, all met here: listen on the PORT
+# it injects, answer GET /health quickly, run as a non-root user, and drain on
+# SIGTERM (server/src/index.ts shuts Colyseus down gracefully and flushes
+# profiles before exiting).
 
 # ---------------------------------------------------------------- build ----
 FROM node:20-alpine AS build
@@ -56,6 +61,14 @@ COPY --from=build /app/shared/dist ./shared/dist
 COPY --from=build /app/server/package.json ./server/package.json
 COPY --from=build /app/server/dist ./server/dist
 
+# The profile directory, created and handed to the `node` user BEFORE it is
+# declared a volume below. The order is load-bearing: Docker DISCARDS any build
+# step's changes to a path after `VOLUME` declares it, so a `chown` written
+# after the declaration - which is how this file used to read - silently left
+# /data owned by root. The non-root server then failed every profile write,
+# logging "failed to write" on each save and persisting nothing.
+RUN mkdir -p /data && chown -R node:node /data
+
 # Profiles are a JSON file, and a container filesystem does not survive a
 # redeploy. Mount a volume here and every player's progression survives a
 # release - see `BROOM_DATA_DIR` in the README.
@@ -70,12 +83,13 @@ COPY --from=build /app/server/dist ./server/dist
 ENV BROOM_DATA_DIR=/data
 VOLUME ["/data"]
 
-# Not root. Nothing the server does needs it, and the base image ships a
-# `node` user for exactly this.
-RUN mkdir -p /data && chown -R node:node /data
+# Not root. Nothing the server does needs it, the base image ships a `node`
+# user for exactly this, and Bloxity requires it.
 USER node
 
-EXPOSE 2569
+# Documentation only - the server listens on whatever PORT the host injects
+# (2567 on Bloxity Legion) and falls back to 2569 when run without one.
+EXPOSE 2567 2569
 
 # The same probe the health check uses, so a container that is up but not
 # listening is reported as unhealthy rather than as running.

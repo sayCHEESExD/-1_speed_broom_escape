@@ -10,18 +10,35 @@ const SCOPE = 'bux';
  * which SKU was bought. What this table decides is the other half - what the
  * game hands over - and that half belongs to the game.
  *
- * An unknown SKU grants nothing and is logged. The webhook still answers 2xx:
- * refusing it would have Bloxity refund a purchase that was genuinely made,
- * and a SKU this build has not heard of is far more likely to be a catalogue
- * that moved ahead of a deploy than an attack.
+ * AN UNKNOWN SKU IS REFUSED, so that Bloxity REFUNDS it.
+ *
+ * This used to be the other way round - accept it with a 200, grant nothing,
+ * log a warning - on the reasoning that refusing would "turn a genuine
+ * purchase into one the player made and lost". That had it backwards. A 2xx
+ * tells Bloxity to KEEP the Bux, and nothing ever comes back to fulfil a SKU
+ * this table does not list, so the player paid and received nothing. A
+ * non-2xx is the only answer that gives them their Bux back. A catalogue that
+ * moved ahead of a deploy is the likeliest cause, and a refund is exactly the
+ * right outcome for it.
+ *
+ * Every SKU the in-game shop offers MUST be in this table. `verify:bloxity`
+ * checks that the two lists agree.
  */
-const SKU_WINS: Readonly<Record<string, number>> = {
+export const SKU_WINS: Readonly<Record<string, number>> = {
   wins_small: 250,
   wins_large: 1500,
 };
 
-/** SKUs that grant something other than Wins, so they are not "unknown". */
-const KNOWN_NON_WINS = new Set(['speed_boost_1h']);
+/** How `record` resolved a webhook. The webhook's HTTP status follows from it. */
+export type RecordOutcome =
+  /** Queued for its player. Answer 2xx. */
+  | 'queued'
+  /** Already fulfilled by an earlier delivery. Answer 2xx - a retry must not refund. */
+  | 'duplicate'
+  /** Nothing in this build can fulfil it. Answer non-2xx, so Bloxity refunds. */
+  | 'unknown-sku'
+  /** Missing an account or a transaction. Answer non-2xx. */
+  | 'malformed';
 
 /** One purchase, waiting for its player to be somewhere it can be applied. */
 export interface PendingGrant {
@@ -54,20 +71,26 @@ class BuxGrants {
   /**
    * Record a paid purchase.
    *
-   * @returns false only if this transaction was already recorded.
+   * The ORDER of the checks is load-bearing. A duplicate is recognised first,
+   * so a retry of something already fulfilled is acknowledged rather than
+   * refunded. An unknown SKU is refused BEFORE the transaction is marked seen,
+   * so nothing about it is remembered as fulfilled - if Bloxity retries after a
+   * deploy that added the SKU, that retry is honoured.
    */
-  record(bloxityId: string, transactionId: string, sku: string): boolean {
-    if (!bloxityId || !transactionId) return false;
+  record(bloxityId: string, transactionId: string, sku: string): RecordOutcome {
+    if (!bloxityId || !transactionId) return 'malformed';
     if (this.seen.has(transactionId)) {
       logger.info(SCOPE, `duplicate webhook for ${transactionId}, ignored`);
-      return false;
+      return 'duplicate';
     }
-    this.seen.add(transactionId);
 
-    const wins = SKU_WINS[sku] ?? 0;
-    if (wins === 0 && !KNOWN_NON_WINS.has(sku)) {
-      logger.warn(SCOPE, `unknown sku "${sku}" - nothing to grant`);
+    const wins = SKU_WINS[sku];
+    if (wins === undefined || wins <= 0) {
+      logger.warn(SCOPE, `unknown sku "${sku}" [${transactionId}] - refusing so it is refunded`);
+      return 'unknown-sku';
     }
+
+    this.seen.add(transactionId);
 
     const queue = this.pending.get(bloxityId) ?? [];
     queue.push({ transactionId, sku, wins });
@@ -76,7 +99,7 @@ class BuxGrants {
       SCOPE,
       `queued ${sku} (+${wins} wins) for ${bloxityId} [${transactionId}]`,
     );
-    return true;
+    return 'queued';
   }
 
   /** Take everything waiting for a player. Empties the queue. */

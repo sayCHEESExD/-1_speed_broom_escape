@@ -484,11 +484,39 @@ The cross-game portal: login, avatars, friends, synced settings and Bux.
   `window.Legion`.** Every call is guarded; a missing SDK degrades to "no
   portal", never to a broken game.
 - **ONE `onUserChanged`**, owned by `Bloxity`. The user object is never cached.
-- **Bux are server-authoritative.** The client passes a SKU and NEVER a price.
+- **Bux are server-authoritative.** The client passes a SKU and NEVER a price,
+  and it does NOT "grant the item locally" on a successful purchase, whatever
+  the integration guide says: the Wins arrive as replicated state from the
+  webhook a moment later. That is this game's one deliberate departure from
+  the guide.
+- **The server never believes a client about WHO it is.** A client sends its
+  Bloxity JWT — in the join options (`bloxityToken`) and in `SetIdentity` on
+  every mid-session login/logout — and `BloxityIdentity` verifies it with
+  `POST /v1/auth/game-token/verify` scoped to the game slug, which is the same
+  call the SDK uses to check its own token. Only the account id Bloxity
+  answers with is bound. The room used to take `bloxityId` from the join
+  options verbatim, and since `getFriends()` hands out account ids, any player
+  could join as a friend and collect the Wins that friend had just paid for.
+  `verify:identity` replays exactly that attack against a running server.
+- Verification is in `onAuth`, so a player is admitted already bound, and it
+  **fails closed but never refuses**: a bad token, a Bloxity outage or a
+  timeout all admit a GUEST. The game is fully playable signed out, and a
+  Bloxity incident must not become an incident of this game. Positive answers
+  are cached briefly; `SetIdentity` is rate limited and a stale answer is
+  discarded if a newer one was sent meanwhile.
+- `BLOXITY_GAME_SLUG` lives in `shared` because both halves must agree on it:
+  the client inits the SDK with it and the server verifies tokens against it.
 - The webhook is `POST /bloxity/bux`, verified against
-  `BLOXITY_WEBHOOK_SECRET`. **Answering 2xx is the contract.** Transaction ids
-  are remembered, so a retry pays out once. Fulfilment QUEUES rather than
-  writes.
+  `BLOXITY_WEBHOOK_SECRET`. **2xx means Bloxity KEEPS the Bux; anything else
+  refunds.** So it answers 200 for a purchase queued or a duplicate of one
+  already fulfilled (a retry must never refund), and **422 for a SKU this
+  build cannot fulfil**, so the player gets their Bux back. It used to answer
+  200 there, which kept the Bux and granted nothing. An unknown SKU is refused
+  before its transaction is marked seen, so a retry after a deploy that adds
+  it is honoured. Fulfilment QUEUES rather than writes.
+- **Every SKU the in-game shop sells must be in `SKU_WINS`**, and
+  `verify:bloxity` fails the build otherwise. The shop once listed
+  `speed_boost_1h`, which nothing granted.
 - **A player is drawn as their real Bloxity avatar, local and remote alike**;
   `player.glb` carries the same twelve bone names `PlayerRig` binds.
 - `AvatarDresser` is the ONE thing that decides which body a rider has.
@@ -511,6 +539,10 @@ Do not claim something works without running it.
 - `npm run verify:capacity` needs a RUNNING server, which is why it is not part
   of `verify`. It asserts all three limits: no room over 15, the overflow
   routed rather than turned away, and every room closed once empty.
+- `npm run verify:identity` also needs a running server, and the real Bloxity
+  API behind it. It queues a purchase for a fake account through the webhook,
+  then joins claiming that account's id, joins with a forged token, and logs
+  in mid-session with one — and asserts none of them receives a single Win.
 - `npm run size:client` after any asset change.
 - Browser behaviour must be checked in a real browser.
 

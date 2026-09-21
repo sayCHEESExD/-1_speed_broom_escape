@@ -259,6 +259,9 @@ npm start --workspace @broom/server
 | `PORT`            | no     | Port to bind. Managed hosts set this themselves; defaults to 2569. |
 | `HOST`            | no     | Interface to bind. Defaults to `0.0.0.0`, which is what a container needs. |
 | `BROOM_DATA_DIR`  | no     | Where profiles are written. Defaults to `data/` beside the server. |
+| `BLOXITY_WEBHOOK_SECRET` | **yes, in production** | Checked against the `x-legion-webhook-secret` header on `POST /bloxity/bux`. Without it, anyone who finds the endpoint can grant Wins. |
+| `BLOXITY_GAME_ID` | no     | The slug player tokens are verified against. Defaults to `speed-broom-escape`. On Bloxity Legion it is injected automatically, and must match the client's `VITE_BLOXITY_GAME_ID`. |
+| `BLOXITY_API_BASE`| no     | Where tokens are verified. Defaults to `https://api.bloxity.io`. |
 
 `GET /health` returns `{"ok":true,"room":"broomobby","rooms":N,"players":N}`
 for the host's health check. The room and player counts come from the
@@ -296,18 +299,27 @@ browser will not open an insecure socket from a secure page.
 
 `.github/workflows/deploy.yml` deploys both halves on a push:
 
-| Branch          | Channel |
-| --------------- | ------- |
-| `dev`           | `dev`   |
-| `main`/`master` | `prod`  |
+| Branch | Channel |
+| ------ | ------- |
+| `dev`  | `dev`   |
+| `main` | `prod`  |
+
+The channel follows the branch and nothing else. A manual "Run workflow"
+redeploys the branch it is started from; there is no channel picker, so no
+button can ship `dev` to production, and any other branch is refused.
 
 The server is built from the repo-root `Dockerfile` - the build context has to
 be the root, because the server imports `@broom/shared` as a workspace
-dependency - pushed to `ghcr.io/saycheesexd/broom-obby-escape-server` under an
+dependency - pushed to `ghcr.io/<owner>/speed-broom-escape-server` under an
 immutable `<channel>-<sha>` tag, and rolled by that tag rather than by the
 moving `<channel>` one, so a re-run cannot ship an image a later push replaced.
-The client is built with `VITE_BLOXITY_GAME_ID`, gated on `typecheck`, `verify`
-and the 12 MB budget, zipped, and uploaded.
+The client is built with `VITE_BLOXITY_GAME_ID` and the channel's
+`VITE_SERVER_URL` (the job fails if that URL is not in the bundle), checked
+against the 12 MB budget, zipped with `index.html` at the archive root, and
+uploaded. Both halves carry the commit SHA as their `version`.
+
+Nothing is published on either half until a shared `verify` job passes:
+`typecheck`, `verify` and `verify:assets`.
 
 Two different hosts, which is not a typo:
 
@@ -325,23 +337,20 @@ The addresses the game answers on:
 
 | Channel | Backend                                          | Frontend                                         |
 | ------- | ------------------------------------------------ | ------------------------------------------------ |
-| `dev`   | `https://broom-obby-escape.dev.host.bloxity.io` | `https://broom-obby-escape.dev.play.bloxity.io` |
-| `prod`  | `https://broom-obby-escape.host.bloxity.io`     | `https://broom-obby-escape.play.bloxity.io`     |
+| `dev`   | `https://speed-broom-escape.dev.host.bloxity.io` | `https://speed-broom-escape.dev.play.bloxity.io` |
+| `prod`  | `https://speed-broom-escape.host.bloxity.io`     | `https://speed-broom-escape.play.bloxity.io`     |
 
 Set these in the repository (Settings -> Secrets and variables -> Actions):
 
-| Name                  | Kind     | Purpose                                     |
-| --------------------- | -------- | ------------------------------------------- |
-| `LEGION_DEPLOY_TOKEN` | secret   | Authenticates both calls. **Required.**     |
-| `SERVER_URL_DEV`      | variable | Optional. Overrides the dev backend URL.    |
-| `SERVER_URL_PROD`     | variable | Optional. Overrides the prod backend URL.   |
-| `LEGION_API_BASE`     | variable | Optional. Overrides `legion.bloxity.io`.    |
-| `HOSTING_API_BASE`    | variable | Optional. Overrides `api.bloxity.io`.       |
+| Name                  | Kind   | Purpose                             |
+| --------------------- | ------ | ----------------------------------- |
+| `LEGION_DEPLOY_TOKEN` | secret | Authenticates both calls. **The only thing to set.** |
 
-Only the token has to be set - the two backend URLs default to this game's own
-Bloxity hosts. One thing is NOT in the repository: after the first run, make the
-GHCR package public (repo -> Packages -> Package settings -> Change visibility),
-or Legion cannot pull the image.
+That is all the Bloxity docs ask for, and the workflow has no optional
+override variables: the API hosts and backend URLs are the documented ones.
+One thing is NOT in the repository: after the first run, make the GHCR package
+public (repo -> Packages -> Package settings -> Change visibility), or Legion
+cannot pull the image.
 
 > [!WARNING]
 > Legion pods are ephemeral and the game scales to zero when idle, so the

@@ -114,6 +114,8 @@ export class Game {
   private readonly rebirthPanel: RebirthPanel;
   private readonly trailShop: TrailShop;
   private readonly network: NetworkClient;
+  /** Stops pushing identity changes to the room. */
+  private unsubscribeIdentity: (() => void) | null = null;
   private readonly world = new CourseWorld();
   private readonly run: RunController;
 
@@ -279,9 +281,20 @@ export class Game {
       onStageAwarded: (message) => this.onStageAwarded(message),
     });
 
-    // The room needs to know which Bloxity account this is, or a purchase
-    // fulfilled by webhook has no profile to land in.
-    this.network.setIdentityProvider(() => this.bloxity.getUser()?._id ?? null);
+    /*
+     * The room needs to know which Bloxity account this is, or a purchase
+     * fulfilled by webhook has no profile to land in - and it has to KNOW, not
+     * be told. So what goes over the wire is the portal's TOKEN, which the
+     * server verifies with Bloxity; an account id is not a secret and a room
+     * that believed one would hand anybody's purchases to whoever claimed it.
+     */
+    this.network.setIdentityProvider(() => this.bloxity.getToken());
+    // And every login or logout after the join. The bridge's one
+    // `onUserChanged` fans out here; it fires once immediately, before there is
+    // a room, which `sendIdentity` correctly ignores.
+    this.unsubscribeIdentity = this.bloxity.onUserChanged(() =>
+      this.network.sendIdentity(this.bloxity.getToken()),
+    );
     // Asked for at JOIN time rather than pushed after it, so the room has this
     // player's appearance in the very first patch everyone else receives.
     this.network.setLookProvider(() =>
@@ -451,7 +464,14 @@ export class Game {
   update(delta: number, _now: number): void {
     // A panel owns the input while it is up; closing it hands control straight
     // back on the next frame.
-    this.input.setSuppressed(anyPanelOpen());
+    /*
+     * The portal's avatar customizer is a panel too.
+     *
+     * Standalone, it is an overlay in this very page, so without this the keys
+     * a player presses while choosing a hat would fly the broom off the ledge
+     * it was parked on. Embedded, it is the portal's and this reads false.
+     */
+    this.input.setSuppressed(anyPanelOpen() || this.bloxity.isCustomizerOpen());
     const input = this.input.sample();
     const player = this.localPlayer;
 
@@ -731,6 +751,8 @@ export class Game {
     window.removeEventListener('keydown', this.onGesture);
     window.removeEventListener('mousedown', this.onGesture);
     window.removeEventListener('touchstart', this.onGesture);
+    this.unsubscribeIdentity?.();
+    this.unsubscribeIdentity = null;
     this.bloxity.dispose();
     this.bloxityPanel.dispose();
     this.dresser?.dispose();

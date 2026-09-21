@@ -27,6 +27,22 @@ export const DEFAULT_SERVER_PORT = 2569;
  */
 export const MAX_PLAYERS_PER_ROOM = 15;
 
+/**
+ * The slug this game is registered under on bloxity.io.
+ *
+ * In `shared` because BOTH halves need it and must agree. The client passes it
+ * to `Legion.SDK.init`, which selects the Bux catalogue; the server passes it
+ * when it verifies a player's Bloxity token, because Bloxity issues game-scoped
+ * tokens and checks them against the game they were issued for. Two copies of
+ * the literal would be two places for a rename to miss one - and a server
+ * verifying against the wrong slug refuses every signed-in player it has.
+ *
+ * Each side may override it at deploy time (`VITE_BLOXITY_GAME_ID` for the
+ * client build, `BLOXITY_GAME_ID` for the server), and the deploy workflow sets
+ * both from the same value.
+ */
+export const BLOXITY_GAME_SLUG = 'speed-broom-escape';
+
 /** Server simulation / state broadcast rate, in Hz. */
 export const SERVER_TICK_RATE = 20;
 
@@ -64,6 +80,19 @@ export const MessageType = {
   BuyTrail: 'buyTrail',
   /** Client -> server: wear an OWNED trail, or 0 to take it off. */
   EquipTrail: 'equipTrail',
+  /**
+   * Client -> server: "I am now signed in to Bloxity as the holder of THIS
+   * token" - or, with an empty token, "I have signed out".
+   *
+   * Carries the portal's JWT and NEVER an account id. An id is not a secret -
+   * the friends list hands them out - so a room that believed one would let
+   * anybody collect somebody else's Bux purchases. The server verifies the
+   * token with Bloxity itself and takes the account id from that answer.
+   *
+   * Sent on every login and logout mid-session. The join carries the same
+   * token, so a player already signed in when they connect needs no message.
+   */
+  SetIdentity: 'setIdentity',
   /**
    * Client -> server: "this is what my Bloxity avatar looks like".
    *

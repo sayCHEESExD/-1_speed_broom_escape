@@ -40,8 +40,11 @@ const DEFAULT_PFP = 'https://static.bloxity.io/img/pfps/0.png?width=128&quality=
  */
 const BUX_PRODUCTS: readonly { sku: string; name: string; blurb: string }[] = [
   { sku: 'wins_small', name: 'Pouch of Wins', blurb: 'A hand up the broom ladder.' },
-  { sku: 'wins_large', name: 'Chest of Wins', blurb: 'Enough for a serious mount.' },
-  { sku: 'speed_boost_1h', name: 'Speed Surge', blurb: 'Double Speed gain for an hour.' },
+  { sku: 'wins_large', name: 'Chest of Wins', blurb: 'Enough for a better broom.' },
+  // 'speed_boost_1h' USED to be listed here, and nothing on the server granted
+  // it: players could buy a Speed Surge and receive nothing. A SKU goes in
+  // this list only once `BuxGrants` can fulfil it - `verify:bloxity` fails the
+  // build otherwise.
 ];
 
 /**

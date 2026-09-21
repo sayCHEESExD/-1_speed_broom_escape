@@ -108,3 +108,14 @@ export interface SetAvatarMessage {
   appearance: AvatarAppearance;
   proportions: AvatarProportions;
 }
+
+/**
+ * Client -> server: the Bloxity token of whoever is now signed in.
+ *
+ * An empty string means "signed out". A TOKEN rather than an id, and that is
+ * the entire point of this message: the server verifies it with Bloxity and
+ * trusts only the account id Bloxity returns. See `MessageType.SetIdentity`.
+ */
+export interface SetIdentityMessage {
+  token: string;
+}

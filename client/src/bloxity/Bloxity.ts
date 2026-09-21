@@ -1,3 +1,4 @@
+import { BLOXITY_GAME_SLUG } from '@broom/shared';
 import { logger } from '../util/logger.js';
 import type {
   LegionEquipped,
@@ -16,15 +17,16 @@ const SCOPE = 'bloxity';
  *
  * Overridable at BUILD time by `VITE_BLOXITY_GAME_ID`, which is what the
  * deploy workflow passes - so a build for a differently-registered channel or
- * a renamed game needs no code change. The literal below is the value the game
- * is registered under today and is what a local `npm run dev` uses.
+ * a renamed game needs no code change. The default comes from `shared`, where
+ * the SERVER reads it too: the server verifies players' tokens against this
+ * slug, and the two disagreeing would refuse every signed-in player.
  *
  * Baked in at build time like every other Vite variable, so changing it means
  * rebuilding; there is no later step in which to inject it.
  */
 export const GAME_SLUG =
   (import.meta.env['VITE_BLOXITY_GAME_ID'] as string | undefined)?.trim() ||
-  'broom-obby-escape';
+  BLOXITY_GAME_SLUG;
 
 /**
  * Every portal setting this game answers to.
@@ -199,6 +201,21 @@ export class Bloxity {
   }
 
   /**
+   * POST `{ token, user }` to a backend of the game's own, for it to verify.
+   *
+   * Wrapped for completeness and deliberately unused: this game has no
+   * accounts of its own. Its server learns who a player is from the token sent
+   * with the Colyseus join and `SetIdentity`, which it verifies with Bloxity
+   * directly - the same check, over the connection it already has.
+   */
+  async authenticateWithServer(url: string): Promise<unknown | null> {
+    const result = guard('auth.authenticateWithServer', (api) =>
+      api.auth?.authenticateWithServer?.(url),
+    );
+    return (await result) ?? null;
+  }
+
+  /**
    * Subscribe to the auth state.
    *
    * Fans out from the ONE `onUserChanged` this class owns, and fires
@@ -246,6 +263,24 @@ export class Bloxity {
 
   toggleCustomizer(): void {
     guard('avatar.toggleCustomizer', (api) => api.avatar?.toggleCustomizer?.());
+  }
+
+  hideCustomizer(): void {
+    guard('avatar.hideCustomizer', (api) => api.avatar?.hideCustomizer?.());
+  }
+
+  /**
+   * True while the portal's customizer is up.
+   *
+   * Polled every frame by the game to suppress movement - standalone, the
+   * customizer is an overlay in this page and keys typed into it would
+   * otherwise fly the broom.
+   */
+  isCustomizerOpen(): boolean {
+    return (
+      guard('avatar.isCustomizerOpen', (api) => api.avatar?.isCustomizerOpen?.() ?? false) ??
+      false
+    );
   }
 
   // ---------------------------------------------------------------- social
@@ -316,6 +351,55 @@ export class Bloxity {
     guard('game.playerInRoom', (api) => api.game?.playerInRoom?.(username));
   }
 
+  /** True when running inside ANY iframe, the portal's or someone else's. */
+  get inIframe(): boolean {
+    return guard('portal.isInIframe', (api) => api.portal?.isInIframe?.() ?? false) ?? false;
+  }
+
+  // ----------------------------------------------------------- settings
+
+  /** A setting's current string value, or '' if the portal does not know it. */
+  getSetting(key: SettingKey): string {
+    return guard(`settings.get(${key})`, (api) => api.settings?.get?.(key) ?? '') ?? '';
+  }
+
+  getAllSettings(): Record<string, string> {
+    return guard('settings.getAll', (api) => api.settings?.getAll?.() ?? {}) ?? {};
+  }
+
+  /** Re-read the settings from the portal; listeners fire for any that moved. */
+  refreshSettings(): void {
+    guard('settings.refresh', (api) => api.settings?.refresh?.());
+  }
+
+  // ---------------------------------------------------------------- raw api
+
+  /**
+   * An authenticated call to api.bloxity.io, bearer token attached by the SDK.
+   *
+   * The escape hatch for anything the SDK has no helper for. Nothing in the
+   * game uses it today; it is here so that a future feature reaches Bloxity
+   * through this module, like everything else, rather than growing its own
+   * `fetch` with its own copy of the token.
+   */
+  async apiGet(path: string): Promise<unknown | null> {
+    return (await guard(`api.get(${path})`, (api) => api.api?.get?.(path))) ?? null;
+  }
+
+  async apiPost(path: string, body?: unknown): Promise<unknown | null> {
+    return (await guard(`api.post(${path})`, (api) => api.api?.post?.(path, body))) ?? null;
+  }
+
+  async apiPatch(path: string, body?: unknown): Promise<unknown | null> {
+    return (await guard(`api.patch(${path})`, (api) => api.api?.patch?.(path, body))) ?? null;
+  }
+
+  async apiDelete(path: string): Promise<unknown | null> {
+    return (await guard(`api.delete(${path})`, (api) => api.api?.delete?.(path))) ?? null;
+  }
+
+  // -------------------------------------------------------------- portal
+
   /** Hand ESC to the portal's own pause menu. */
   showPortalMenu(lockCursorOnResume = true): void {
     guard('portal.showMenu', (api) => api.portal?.showMenu?.(lockCursorOnResume));
@@ -333,6 +417,12 @@ export class Bloxity {
    * Granting is the SERVER's job too - Bloxity calls this game's webhook and
    * the room credits the profile. What comes back here is only good enough to
    * tell the player what happened.
+   *
+   * This is the one place this game DEPARTS from the integration guide, which
+   * says to "grant the item locally" on success. That would be the client
+   * deciding a reward, which nothing in this game is allowed to do: the Wins
+   * arrive as replicated state a moment later, from the webhook, and the
+   * transaction id is logged for support rather than acted on.
    */
   async requestPurchase(
     sku: string,

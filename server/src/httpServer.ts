@@ -108,15 +108,17 @@ const handleHealth = async (response: ServerResponse): Promise<void> => {
  * `requestPurchase` result is a receipt it can show; it is not a grant, and
  * nothing in the client is trusted to say a payment happened.
  *
- * ANSWERING 2xx IS THE CONTRACT. Bloxity refunds a purchase whose webhook did
- * not succeed, so this replies 200 for anything it has safely recorded -
- * including a SKU this build does not recognise, which is far more likely to
- * be a catalogue that moved ahead of a deploy than an attack, and which a
- * refund would turn into a purchase the player made and lost.
+ * ANSWERING 2xx IS THE CONTRACT, in both directions. A 2xx tells Bloxity the
+ * purchase is fulfilled and it KEEPS the Bux; anything else and it refunds.
+ * So the status is chosen by one question - can this build actually deliver
+ * what was bought?
  *
- * It replies 401 only when a configured secret does not match, and 400 only
- * when the body is not something that can be recorded at all. Both are cases
- * where a refund is the correct outcome.
+ *  - 200 when it is queued for its player, and 200 for a duplicate delivery
+ *    of something already queued: a retry must never refund a purchase that
+ *    was fulfilled the first time.
+ *  - 422 for a SKU this build cannot fulfil. It used to answer 200 here, which
+ *    kept the player's Bux and gave them nothing - see `BuxGrants`.
+ *  - 401 for a bad secret and 400 for a body that cannot be recorded at all.
  */
 const handleBuxWebhook = async (
   request: IncomingMessage,
@@ -147,10 +149,21 @@ const handleBuxWebhook = async (
     return;
   }
 
-  buxGrants.record(body.userId, body.transactionId, body.sku);
-  logger.info(
-    SCOPE,
-    `accepted ${body.sku} for ${body.username ?? body.userId} [${body.transactionId}]`,
-  );
-  reply(200, { ok: true, transactionId: body.transactionId });
+  const outcome = buxGrants.record(body.userId, body.transactionId, body.sku);
+  switch (outcome) {
+    case 'queued':
+    case 'duplicate':
+      logger.info(
+        SCOPE,
+        `accepted ${body.sku} for ${body.username ?? body.userId} [${body.transactionId}] (${outcome})`,
+      );
+      reply(200, { ok: true, transactionId: body.transactionId });
+      return;
+    case 'unknown-sku':
+      // Non-2xx on purpose: this is how the player gets their Bux back.
+      reply(422, { ok: false, error: `unknown sku "${body.sku}"` });
+      return;
+    default:
+      reply(400, { ok: false, error: 'malformed payload' });
+  }
 };
