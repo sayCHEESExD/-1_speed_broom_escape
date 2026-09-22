@@ -282,6 +282,22 @@ export class NetworkClient {
     if (!this.room) throw new Error('join produced no room');
 
     this.bindRoom(this.room);
+
+    /*
+     * CATCH UP on identity that changed WHILE the join was in flight.
+     *
+     * The token (and guest identity) went into the join options when the join
+     * STARTED. Inside the Bloxity portal the SDK learns the login from the
+     * parent page asynchronously, and if that answer lands mid-join the
+     * `sendIdentity` it triggers found no room and was dropped - after which
+     * the join recorded the stale, empty token as "what the server knows" and
+     * a signed-in player stayed a guest, shown as "Guest", for the whole
+     * session. Both sends are deduped, so this costs nothing when nothing
+     * changed.
+     */
+    this.sendIdentity(this.identity?.() ?? null);
+    this.sendGuestProfile();
+
     this.setStatus('connected');
     logger.info(
       SCOPE,

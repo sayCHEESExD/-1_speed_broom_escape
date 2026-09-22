@@ -673,6 +673,12 @@ The cross-game portal: login, avatars, friends, synced settings and Bux.
   `verify:identity` replays exactly that attack against a running server.
 - The client sends the TOKEN, never an account id, and dedupes: a token
   already sent is not sent again.
+- **Embedded in the portal, the SDK learns the login ASYNCHRONOUSLY** (the
+  parent answers its auth request by `postMessage`). So `Game.connect` awaits
+  `Bloxity.whenAuthSettled()` (bounded, 4 s) before joining, and
+  `NetworkClient.connect` re-sends the CURRENT token after every join - a
+  login that landed mid-join used to be dropped, leaving a signed-in player a
+  guest shown as "Guest" for the whole session.
 - Verification is in `onAuth` and has **three outcomes**, and it FAILS CLOSED:
   only a 2xx carrying a valid string `_id` is `verified`.
   - `verified` — bound to `bloxity:<id>`. Cached by the token's SHA-256 for

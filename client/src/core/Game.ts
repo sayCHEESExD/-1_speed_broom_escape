@@ -463,6 +463,9 @@ export class Game {
 
   /** Join the Colyseus room. Rendering continues even if this fails. */
   async connect(): Promise<void> {
+    // Join as whoever Bloxity says this is - not as a guest because the portal
+    // had not answered yet. Bounded, so a missing portal cannot block play.
+    await this.bloxity.whenAuthSettled();
     await this.network.connect();
   }
 

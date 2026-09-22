@@ -126,6 +126,10 @@ export class Bloxity {
   private started = false;
   /** Listeners for the UI layer, so the panel does not subscribe separately. */
   private readonly userListeners = new Set<(user: LegionUser | null) => void>();
+  /** User-change notifications seen from the SDK. The first is its initial state. */
+  private userNotifications = 0;
+  /** Joins waiting for the SDK to settle who is signed in. */
+  private readonly settledWaiters = new Set<() => void>();
 
   constructor(host: BloxityHost) {
     this.host = host;
@@ -188,6 +192,43 @@ export class Bloxity {
    * The SDK's guest identity - name and picture - while nobody is signed in;
    * null when a user is (their name comes from Bloxity via the server).
    */
+  /**
+   * Resolve once the SDK has SETTLED who is signed in - or after `timeoutMs`.
+   *
+   * The game waits on this before joining a room, so a signed-in player is
+   * never admitted as a guest merely because the SDK had not heard back yet.
+   * Standalone, the SDK restores a stored token synchronously in `init`, so
+   * this settles at once. EMBEDDED in the portal it has no token until the
+   * parent page answers its auth request - asynchronously - and until then it
+   * reports "signed out". Settled means: no SDK at all, or a token is present,
+   * or not embedded, or a user-change has arrived AFTER the SDK's initial
+   * (always-null) one - the portal's answer, whatever it said. The timeout is
+   * what keeps a portal that never answers from blocking the game; the
+   * network client catches up on a login that lands later.
+   */
+  whenAuthSettled(timeoutMs = 4000): Promise<void> {
+    if (this.authSettled()) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.settledWaiters.delete(done);
+        logger.warn(SCOPE, `the portal had not answered the auth request after ${timeoutMs}ms; joining now`);
+        resolve();
+      }, timeoutMs);
+      const done = (): void => {
+        clearTimeout(timer);
+        resolve();
+      };
+      this.settledWaiters.add(done);
+    });
+  }
+
+  private authSettled(): boolean {
+    if (!this.started || !sdk()) return true;
+    if (this.getToken()) return true;
+    if (!this.embedded) return true;
+    return this.userNotifications >= 2;
+  }
+
   getGuest(): LegionGuest | null {
     return guard('auth.getGuest', (api) => api.auth?.getGuest?.() ?? null) ?? null;
   }
@@ -488,6 +529,11 @@ export class Bloxity {
     this.keep(
       guard('auth.onUserChanged', (api) =>
         api.auth?.onUserChanged?.((user) => {
+          this.userNotifications += 1;
+          if (this.authSettled()) {
+            for (const waiter of this.settledWaiters) waiter();
+            this.settledWaiters.clear();
+          }
           logger.info(
             SCOPE,
             user ? `signed in as @${user.username}` : 'signed out',

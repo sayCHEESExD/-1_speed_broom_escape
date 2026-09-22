@@ -56,7 +56,21 @@ globalThis.fetch = async (input, init = {}) => {
     return json(401, { code: 'GAME_TOKEN_INVALID', error: `wrong gameSlug "${slug}"` });
   }
 
-  const match = /^ok\.([A-Za-z0-9_-]{1,64})$/.exec(token);
+  // A JWT-SHAPED token whose payload carries `stubAccount`, for tests that
+  // hand a token through the real Bloxity SDK - which discards anything that
+  // is not three dot-separated parts.
+  let jwtAccount = null;
+  const parts = token.split('.');
+  if (parts.length === 3) {
+    try {
+      jwtAccount = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')).stubAccount ?? null;
+    } catch {
+      jwtAccount = null;
+    }
+  }
+  const fromJwt =
+    typeof jwtAccount === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(jwtAccount) ? [token, jwtAccount] : null;
+  const match = /^ok\.([A-Za-z0-9_-]{1,64})$/.exec(token) ?? fromJwt;
   if (!match) return json(401, { code: 'GAME_TOKEN_INVALID', error: 'The game capability is invalid or expired' });
   // Shaped like the real reply the SDK consumes: the account's display name
   // and its profile picture on Bloxity's thumbnail CDN come back with the id.
