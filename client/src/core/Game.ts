@@ -307,6 +307,22 @@ export class Game {
       // which the server shows for a guest. Signed in, there is none to send
       // - the server names the player from Bloxity's own verify reply.
       this.network.sendGuestProfile();
+      // Signed in: the name the SDK has for the account - what the portal shows.
+      this.network.sendAccountProfile();
+    });
+    /*
+     * The SIGNED-IN player's name, as the Bloxity SDK records it: the same
+     * `displayName`, else `username`, the portal shows. The server uses it
+     * only once the token has verified as this same account.
+     */
+    this.network.setAccountProvider(() => {
+      const user = this.bloxity.getUser();
+      if (!user?._id) return null;
+      return {
+        accountId: user._id,
+        name: (user.displayName ?? '').trim() || (user.username ?? '').trim(),
+        pfp: user.pfp ?? '',
+      };
     });
     /*
      * The Bloxity GUEST identity, for while this player is signed out. The

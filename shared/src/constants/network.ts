@@ -122,6 +122,14 @@ export const MessageType = {
    * Bloxity's thumbnail CDN (see `shared/src/config/playerNames.ts`).
    */
   SetGuestProfile: 'setGuestProfile',
+  /**
+   * Client -> server: "the Bloxity SDK says the signed-in account `accountId`
+   * is called THIS" - the SDK's own user record (`displayName`, else
+   * `username`, and `pfp`), which is what the portal shows the player.
+   * Shown ONLY while the session is VERIFIED as that same account: the id here
+   * is a matching key for a cosmetic name, never trusted to identify anyone.
+   */
+  SetAccountProfile: 'setAccountProfile',
 } as const;
 
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];

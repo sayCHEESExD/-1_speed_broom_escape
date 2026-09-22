@@ -536,6 +536,34 @@ const runSuite = async (backend, mongod) => {
       true,
     );
 
+    // The NAME THE PORTAL SHOWS: the SDK's user record, sent by the client,
+    // used once the session is verified as that same account. The stub's
+    // verify reply says "Chicken <id>" - standing in for the generated name
+    // the verify endpoint can carry - so these prove which source wins.
+    const sdkPfp = 'https://static.bloxity.io/img/pfps/s7_h1.png?width=128&quality=85&v=2';
+    const named = await enter({
+      playerId: 'p_disp_d',
+      token: 'ok.acct_sdk',
+      extra: { accountId: 'acct_sdk', accountName: 'Kavin Real', accountPfp: sdkPfp },
+    });
+    await waitFor(() => seen(guest, named)?.displayName);
+    check("a signed-in player shows the SDK's account name (what the portal shows)", seen(guest, named)?.displayName, 'Kavin Real');
+    check('  with the SDK account picture', seen(guest, named)?.pfp, sdkPfp);
+    named.room.send('setAccountProfile', { accountId: 'acct_sdk', name: 'Kavin Renamed', pfp: sdkPfp });
+    await waitFor(() => seen(guest, named)?.displayName === 'Kavin Renamed');
+    check('a rename reported by the SDK reaches everyone', seen(guest, named)?.displayName, 'Kavin Renamed');
+    named.room.send('setAccountProfile', { accountId: 'acct_someone_else', name: 'Not Me', pfp: '' });
+    await sleep(600);
+    check("an SDK name for a DIFFERENT account is not shown", seen(guest, named)?.displayName, 'Chicken acct_sdk');
+    const posing = await enter({
+      playerId: 'p_disp_e',
+      extra: { accountId: 'acct_sdk', accountName: 'Kavin Real', guestName: 'Lynx5' },
+    });
+    await waitFor(() => seen(guest, posing)?.displayName);
+    check('a GUEST cannot use an account name, even claiming an account id', seen(guest, posing)?.displayName, 'Lynx5');
+    await named.leave();
+    await posing.leave();
+
     // The boards: name + picture per row, from the server.
     await account.ride(1500);
     const row = await waitFor(

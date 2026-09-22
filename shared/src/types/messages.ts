@@ -122,6 +122,13 @@ export interface SetIdentityMessage {
   token: string;
 }
 
+/** Client -> server: the SDK's signed-in user. See `MessageType.SetAccountProfile`. */
+export interface SetAccountProfileMessage {
+  accountId: string;
+  name: string;
+  pfp: string;
+}
+
 /** Client -> server: the Bloxity guest identity. See `MessageType.SetGuestProfile`. */
 export interface SetGuestProfileMessage {
   name: string;

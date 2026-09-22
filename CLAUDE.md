@@ -629,10 +629,15 @@ the generated `@Adjective_Noun_1234` handles (`handleFor`) are gone.
 - **Never shown:** an `@username`, the account id, the profile key, the
   guest's browser id, a session id, or anything derived from them. Those stay
   internal, for networking and persistence.
-- **Signed in:** the name (`displayName`, else `username` WITHOUT an `@`) and
-  picture come from Bloxity's own token-verify reply - the same reply that
-  proves the account id, and the same record the SDK shows the player. The
-  server refreshes them whenever a token for that account is verified.
+- **Signed in:** the name is what the Bloxity SDK's user record says -
+  `displayName`, else `username`, WITHOUT an `@` - the name the PORTAL shows,
+  exactly as `+1 Speed Spaceship Escape` does it. The client sends it with the
+  account id it belongs to (`SetAccountProfile`, and at join); the server
+  shows it ONLY while the session is VERIFIED as that same account id. Do NOT
+  go back to the token-verify reply's `displayName` as the primary source: it
+  can be a generated "animal + digits" name rather than the account's own, and
+  that is exactly what players saw. The verify reply's name and picture are
+  the FALLBACK when the SDK sent none.
 - **Guest:** the identity Bloxity's SDK mints (`auth.getGuest()`, e.g.
   "Comet42"), sent by the browser (`SetGuestProfile`, and at join). It is the
   one name the server takes on trust, so it must be GUEST-SHAPED

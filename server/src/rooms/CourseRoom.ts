@@ -20,6 +20,7 @@ import {
   type SetAvatarMessage,
   type SetIdentityMessage,
   type SetGuestProfileMessage,
+  type SetAccountProfileMessage,
   type GuestIdMessage,
   GUEST_FALLBACK_NAME,
   cleanDisplayName,
@@ -117,7 +118,27 @@ interface Session {
   accountProfile: AccountProfile | null;
   /** The browser's Bloxity guest identity, checked. Used only while signed out. */
   guestProfile: GuestProfile;
+  /**
+   * What the Bloxity SDK in the browser calls the signed-in account - the
+   * name the portal itself shows. Used only while the session is VERIFIED as
+   * `accountId`; see `applyDisplay`.
+   */
+  accountClaim: AccountClaim | null;
 }
+
+/** The SDK's signed-in user record, as the browser reported it, cleaned. */
+interface AccountClaim {
+  accountId: string;
+  name: string;
+  pfp: string;
+}
+
+const checkAccountClaim = (accountId: unknown, name: unknown, pfp: unknown): AccountClaim | null => {
+  if (typeof accountId !== 'string' || !accountId) return null;
+  const cleaned = cleanDisplayName(name);
+  if (!cleaned) return null;
+  return { accountId, name: cleaned, pfp: cleanPfpUrl(pfp, 'account') };
+};
 
 /** A guest's name and picture, as Bloxity's SDK minted them, after checking. */
 interface GuestProfile {
@@ -179,6 +200,13 @@ interface JoinOptions {
    */
   guestName?: string;
   guestPfp?: string;
+  /**
+   * The Bloxity SDK's signed-in user, for the NAME shown - see
+   * `SetAccountProfile`. Ignored unless the token verifies as `accountId`.
+   */
+  accountId?: string;
+  accountName?: string;
+  accountPfp?: string;
 }
 
 /**
@@ -273,6 +301,9 @@ export class CourseRoom extends Room<CourseState> {
     );
     this.onMessage(MessageType.SetGuestProfile, (client, message: SetGuestProfileMessage) =>
       this.onSetGuestProfile(client, message),
+    );
+    this.onMessage(MessageType.SetAccountProfile, (client, message: SetAccountProfileMessage) =>
+      this.onSetAccountProfile(client, message),
     );
     this.onMessage(MessageType.EquipTrail, (client, message: EquipTrailMessage) =>
       this.onEquipTrail(client, message),
@@ -402,6 +433,7 @@ export class CourseRoom extends Room<CourseState> {
       granting: false,
       accountProfile: auth.identity?.status === 'verified' ? auth.identity.profile : null,
       guestProfile: checkGuestProfile(options.guestName, options.guestPfp),
+      accountClaim: checkAccountClaim(options.accountId, options.accountName, options.accountPfp),
     };
     this.sessions.set(client.sessionId, session);
     this.profileKeys.set(client.sessionId, session.profileKey);
@@ -812,18 +844,37 @@ export class CourseRoom extends Room<CourseState> {
   }
 
   /**
+   * The Bloxity SDK's signed-in user arrived or changed. Stored, and shown
+   * only if it names the account this session is verified as.
+   */
+  private onSetAccountProfile(client: Client, message: SetAccountProfileMessage): void {
+    const session = this.sessions.get(client.sessionId);
+    const player = this.state.players.get(client.sessionId);
+    if (!session || !player) return;
+    session.accountClaim = checkAccountClaim(message?.accountId, message?.name, message?.pfp);
+    this.applyDisplay(session, player);
+  }
+
+  /**
    * What everybody sees this player as. The ONE place it is decided.
    *
-   * Signed in: exactly what Bloxity's verify reply said. Signed out: the
-   * checked Bloxity guest identity, or "Guest" until the browser has sent it.
-   * Never an id, a profile key or anything derived from one.
+   * Signed in: the name the Bloxity SDK has for the account - the one the
+   * portal shows the player - once the server has VERIFIED the session as
+   * that same account; Bloxity's verify reply is the fallback when the SDK
+   * gave none. (The verify endpoint's own `displayName` can be a generated
+   * one, not the name the account is known by, which is why the SDK's record
+   * comes first.) Signed out: the checked Bloxity guest identity, or "Guest"
+   * until the browser has sent it. Never an id, a profile key or anything
+   * derived from one.
    */
   private applyDisplay(session: Session, player: PlayerState): void {
     let name: string;
     let pfp: string;
     if (session.accountId && session.accountProfile) {
-      name = session.accountProfile.displayName;
-      pfp = session.accountProfile.pfp;
+      const claim =
+        session.accountClaim?.accountId === session.accountId ? session.accountClaim : null;
+      name = claim?.name || session.accountProfile.displayName;
+      pfp = claim?.pfp || session.accountProfile.pfp;
     } else {
       name = session.guestProfile.name || GUEST_FALLBACK_NAME;
       pfp = session.guestProfile.pfp;

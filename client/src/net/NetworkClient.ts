@@ -9,6 +9,7 @@ import {
   type StageAwardedMessage,
   type SetIdentityMessage,
   type SetGuestProfileMessage,
+  type SetAccountProfileMessage,
   type GuestIdMessage,
 } from '@broom/shared';
 import { Client, getStateCallbacks, type Room } from 'colyseus.js';
@@ -61,6 +62,10 @@ const resolvePlayerId = (): string => {
   }
   return fresh;
 };
+
+/** Comparison key for an account profile, so an unchanged one is not re-sent. */
+const accountKey = (p: SetAccountProfileMessage): string =>
+  [p.accountId, p.name, p.pfp].join('\u0000');
 
 /** Everything the game needs to react to. Kept deliberately small. */
 export interface NetworkHandlers {
@@ -189,6 +194,29 @@ export class NetworkClient {
   }
 
   private guest: (() => SetGuestProfileMessage | null) | null = null;
+
+  /**
+   * Where the SIGNED-IN player's name comes from: the Bloxity SDK's own user
+   * record - the name the portal shows. Null while signed out. The server
+   * shows it only once it has verified the session as that same account.
+   */
+  setAccountProvider(provider: () => SetAccountProfileMessage | null): void {
+    this.account = provider;
+  }
+
+  /** Send the SDK's signed-in user if it changed. A no-op outside a room. */
+  sendAccountProfile(): void {
+    const profile = this.account?.() ?? null;
+    if (!this.room || !profile) return;
+    const key = accountKey(profile);
+    if (key === this.sentAccount) return;
+    this.sentAccount = key;
+    this.room.send(MessageType.SetAccountProfile, profile);
+  }
+
+  private account: (() => SetAccountProfileMessage | null) | null = null;
+  /** The account profile last sent to the current room, as a comparison key. */
+  private sentAccount = '';
   /** The guest identity last sent to the current room, as a comparison key. */
   private sentGuest = '';
 
@@ -241,6 +269,7 @@ export class NetworkClient {
     const playerId = resolvePlayerId();
     const token = this.identity?.() ?? '';
     const guest = this.guest?.() ?? null;
+    const account = this.account?.() ?? null;
     const attempts = JOIN_BACKOFF_MS.length + 1;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -257,10 +286,15 @@ export class NetworkClient {
           // The Bloxity guest identity, for while this player is signed out.
           guestName: guest?.name,
           guestPfp: guest?.pfp,
+          // The SDK's signed-in user: the NAME shown once the token verifies.
+          accountId: account?.accountId,
+          accountName: account?.name,
+          accountPfp: account?.pfp,
         });
         // What the server now knows, so an unchanged token is not re-sent.
         this.sentToken = token;
         this.sentGuest = guest ? `${guest.name}\u0000${guest.pfp}` : '';
+        this.sentAccount = account ? accountKey(account) : '';
         break;
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
@@ -297,6 +331,7 @@ export class NetworkClient {
      */
     this.sendIdentity(this.identity?.() ?? null);
     this.sendGuestProfile();
+    this.sendAccountProfile();
 
     this.setStatus('connected');
     logger.info(
