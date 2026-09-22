@@ -632,12 +632,18 @@ the generated `@Adjective_Noun_1234` handles (`handleFor`) are gone.
 - **Signed in:** the name is what the Bloxity SDK's user record says -
   `displayName`, else `username`, WITHOUT an `@` - the name the PORTAL shows,
   exactly as `+1 Speed Spaceship Escape` does it. The client sends it with the
-  account id it belongs to (`SetAccountProfile`, and at join); the server
-  shows it ONLY while the session is VERIFIED as that same account id. Do NOT
-  go back to the token-verify reply's `displayName` as the primary source: it
-  can be a generated "animal + digits" name rather than the account's own, and
-  that is exactly what players saw. The verify reply's name and picture are
-  the FALLBACK when the SDK sent none.
+  account id it belongs to (`SetAccountProfile`, and at join). The name does
+  NOT wait on server verification: INSIDE THE PORTAL EVERY VISITOR HAS AN SDK
+  USER (the portal hands each one a "principal", guests included), so the SDK
+  reports no guest identity and an unverified session would otherwise be left
+  with nothing but "Guest" - which is exactly what shipped once. When the
+  session IS verified, a name reported for a DIFFERENT account id is ignored.
+  Progress is still keyed only to what the server verified. Do NOT go back to
+  the token-verify reply's `displayName` as the primary source: it can be a
+  generated "animal + digits" name. It is the FALLBACK when the SDK sent none.
+- The client logs `identity at join: ...` (token present or not, the SDK
+  user's name, the SDK guest's name). That one console line says which case a
+  wrong name is.
 - **Guest:** the identity Bloxity's SDK mints (`auth.getGuest()`, e.g.
   "Comet42"), sent by the browser (`SetGuestProfile`, and at join). It is the
   one name the server takes on trust, so it must be GUEST-SHAPED

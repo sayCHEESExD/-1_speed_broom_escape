@@ -870,11 +870,23 @@ export class CourseRoom extends Room<CourseState> {
   private applyDisplay(session: Session, player: PlayerState): void {
     let name: string;
     let pfp: string;
+    const claim = session.accountClaim;
     if (session.accountId && session.accountProfile) {
-      const claim =
-        session.accountClaim?.accountId === session.accountId ? session.accountClaim : null;
-      name = claim?.name || session.accountProfile.displayName;
-      pfp = claim?.pfp || session.accountProfile.pfp;
+      // Verified: the SDK's name for THIS account; a name reported for some
+      // other account (a switch in flight) is not shown on this one.
+      const own = claim?.accountId === session.accountId ? claim : null;
+      name = own?.name || session.accountProfile.displayName;
+      pfp = own?.pfp || session.accountProfile.pfp;
+    } else if (claim) {
+      // The Bloxity SDK has a signed-in user - which, inside the portal, is
+      // EVERY visitor: the portal hands each one a principal - but the server
+      // has not verified the session as an account (yet, or at all). Show the
+      // SDK's name anyway, exactly as `+1 Speed Spaceship Escape` does. The
+      // guest path below would otherwise be left with no name but "Guest",
+      // because the SDK reports no guest identity once it has a user. The
+      // name decides nothing; progress stays keyed to what was verified.
+      name = claim.name;
+      pfp = claim.pfp;
     } else {
       name = session.guestProfile.name || GUEST_FALLBACK_NAME;
       pfp = session.guestProfile.pfp;

@@ -560,7 +560,10 @@ const runSuite = async (backend, mongod) => {
       extra: { accountId: 'acct_sdk', accountName: 'Kavin Real', guestName: 'Lynx5' },
     });
     await waitFor(() => seen(guest, posing)?.displayName);
-    check('a GUEST cannot use an account name, even claiming an account id', seen(guest, posing)?.displayName, 'Lynx5');
+    // Not verified (no token), but the SDK has a user record - which inside
+    // the portal is every visitor. Shown by that name, as Spaceship does,
+    // rather than falling through to "Guest".
+    check("an UNVERIFIED session with an SDK user shows the SDK's name, not Guest", seen(guest, posing)?.displayName, 'Kavin Real');
     await named.leave();
     await posing.leave();
 

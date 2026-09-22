@@ -270,6 +270,12 @@ export class NetworkClient {
     const token = this.identity?.() ?? '';
     const guest = this.guest?.() ?? null;
     const account = this.account?.() ?? null;
+    // One line that answers "why is my name wrong" from the console alone.
+    logger.info(
+      SCOPE,
+      `identity at join: ${token ? 'Bloxity login token present' : 'NO Bloxity login token'}; ` +
+        `SDK user ${account ? `"${account.name}"` : 'none'}; SDK guest ${guest ? `"${guest.name}"` : 'none'}`,
+    );
     const attempts = JOIN_BACKOFF_MS.length + 1;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
