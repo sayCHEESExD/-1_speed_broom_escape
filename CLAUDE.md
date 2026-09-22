@@ -705,6 +705,14 @@ The cross-game portal: login, avatars, friends, synced settings and Bux.
   verifying portal tokens locally — always ask Bloxity.
 - `BLOXITY_GAME_SLUG` lives in `shared` because both halves must agree on it:
   the client inits the SDK with it and the server verifies tokens against it.
+- **It is the PORTAL slug, `speed-broom` - NOT the Legion hosting id
+  `speed-broom-escape`.** Bloxity's `/v1/games` lists this game as
+  `slug: "speed-broom"`, and the portal requests every player's game token for
+  that slug. `BLOXITY_GAME_ID` (Legion-injected) and the deploy workflow's app
+  id are the HOSTING id; nothing may override the verify slug with either.
+  That mix-up rejected every signed-in player: each was saved under their
+  browser's guest key, so PC and phone had different progress. A rejected
+  token whose payload names another game is logged as a slug mismatch.
 - The webhook is `POST /bloxity/bux`, verified against
   `BLOXITY_WEBHOOK_SECRET`. **2xx means Bloxity KEEPS the Bux; anything else
   refunds.** So it answers 200 for a purchase queued or a duplicate of one

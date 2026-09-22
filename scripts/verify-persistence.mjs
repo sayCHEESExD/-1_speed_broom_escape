@@ -288,7 +288,7 @@ const webhook = async (transactionId, userId, sku = 'wins_small') =>
     await fetch(`http://127.0.0.1:${GAME_PORT}/bloxity/bux`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-legion-webhook-secret': SECRET },
-      body: JSON.stringify({ transactionId, userId, username: userId, gameSlug: 'speed-broom-escape', sku }),
+      body: JSON.stringify({ transactionId, userId, username: userId, gameSlug: 'speed-broom', sku }),
     })
   ).status;
 
@@ -492,6 +492,38 @@ const runSuite = async (backend, mongod) => {
     check('everything came back after a hard kill', back.speed(), expectedSpeed);
     check('  wins too', back.wins(), 25);
     await back.leave();
+  }
+
+  // --------------------------------------------------------------- 10a
+  section('one account, two devices: the SAME profile everywhere');
+  {
+    // Two browsers = two different browser ids, as a PC and a phone have.
+    const pc1 = await enter({ playerId: 'p_device_pc', token: 'ok.acct_travel' });
+    await pc1.ride(1500);
+    const afterPc = pc1.speed();
+    await pc1.leave();
+    await waitFor(async () => (await backend.read('bloxity:acct_travel'))?.totalSpeed === afterPc);
+    check('progress made on the PC is saved to the ACCOUNT', (await backend.read('bloxity:acct_travel'))?.totalSpeed, afterPc);
+
+    const phone = await enter({ playerId: 'p_device_phone', token: 'ok.acct_travel' });
+    check('the phone loads EXACTLY the PC progress', phone.speed(), afterPc);
+    await phone.ride(1500);
+    const afterPhone = phone.speed();
+    check('  and adds to it on the phone', afterPhone > afterPc, true);
+    await phone.leave();
+    await waitFor(async () => (await backend.read('bloxity:acct_travel'))?.totalSpeed === afterPhone);
+
+    const pc2 = await enter({ playerId: 'p_device_pc', token: 'ok.acct_travel' });
+    check('back on the PC, the phone progress is there', pc2.speed(), afterPhone);
+    await pc2.leave();
+    check('no per-browser profile was created for either device', await backend.read('p_device_phone'), null);
+
+    const other = await enter({ playerId: 'p_device_pc', token: 'ok.acct_other' });
+    check('a DIFFERENT account on the same PC gets its own, separate profile', other.speed(), 0);
+    await other.leave();
+    const guestHere = await enter({ playerId: 'p_device_guest' });
+    check('a signed-out guest still gets the guest profile', guestHere.speed(), 0);
+    await guestHere.leave();
   }
 
   // --------------------------------------------------------------- 10b

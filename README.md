@@ -289,7 +289,15 @@ npm start --workspace @broom/server
 | `MONGODB_URI`     | **yes, in production** | The progress database. Bloxity Legion injects it. Unset, the server uses the JSON dev store. |
 | `BROOM_DATA_DIR`  | no     | Where the JSON dev store lives, and where a legacy `profiles.json` is imported from. Defaults to `data/` beside the server. |
 | `BLOXITY_WEBHOOK_SECRET` | **yes, in production** | Checked against the `x-legion-webhook-secret` header on `POST /bloxity/bux`. Without it, anyone who finds the endpoint can grant Wins. |
-| `BLOXITY_GAME_ID` | no     | The slug player tokens are verified against. Defaults to `speed-broom-escape`. On Bloxity Legion it is injected automatically, and must match the client's `VITE_BLOXITY_GAME_ID`. |
+| `BLOXITY_GAME_ID` | no     | Legion's HOSTING id (`speed-broom-escape`), injected automatically. The server does NOT verify tokens against it - see "Two Bloxity ids" below. |
+
+> **Two Bloxity ids, and they are not the same.** Legion hosts this game as
+> `speed-broom-escape` (deploys, backend URL, play URL, `BLOXITY_GAME_ID`).
+> The Bloxity PORTAL lists it as `speed-broom` - and the portal issues every
+> player's login token for that slug. Tokens are therefore verified against
+> `speed-broom` (`BLOXITY_GAME_SLUG` in `shared`), and nothing may override it
+> with the hosting id: doing so rejected every signed-in player, so progress
+> was saved per browser and never followed a player between devices.
 
 `GET /health` returns `{"ok":true,"room":"broomobby","rooms":N,"players":N}`
 for the host's health check. The room and player counts come from the
@@ -385,8 +393,7 @@ be the root, because the server imports `@broom/shared` as a workspace
 dependency - pushed to `ghcr.io/<owner>/speed-broom-escape-server` under an
 immutable `<channel>-<sha>` tag, and rolled by that tag rather than by the
 moving `<channel>` one, so a re-run cannot ship an image a later push replaced.
-The client is built with `VITE_BLOXITY_GAME_ID` and the channel's
-`VITE_SERVER_URL` (the job fails if that URL is not in the bundle), checked
+The client is built with the channel's `VITE_SERVER_URL` (the job fails if that URL is not in the bundle), checked
 against the 12 MB budget, zipped with `index.html` at the archive root, and
 uploaded. Both halves carry the commit SHA as their `version`.
 

@@ -33,6 +33,9 @@ const DATA_DIR = mkdtempSync(joinPath(tmpdir(), 'verify-bloxity-'));
 process.env.BLOXITY_WEBHOOK_SECRET = SECRET;
 process.env.BROOM_DATA_DIR = DATA_DIR;
 delete process.env.MONGODB_URI;
+// Legion injects its HOSTING id as BLOXITY_GAME_ID. The verifier must ignore
+// it and use the PORTAL slug - checked below.
+process.env.BLOXITY_GAME_ID = 'speed-broom-escape';
 
 const VERIFY_URL = 'https://api.bloxity.io/v1/auth/game-token/verify';
 
@@ -128,6 +131,26 @@ console.log('identity');
   const identity = new BloxityIdentity('slug');
   const result = await identity.verify('t');
   check('an unwrapped user body is understood', result.status === 'verified' && result.accountId, 'acct_bare');
+}
+
+// ------------------------------------------------------------ game slug
+/*
+ * The portal issues players' tokens for its slug, "speed-broom". Verifying
+ * against Legion's hosting id "speed-broom-escape" rejected every signed-in
+ * player, so every account was saved per browser.
+ */
+console.log('game slug');
+{
+  respond = () => json(200, { user: { _id: 'acct_slug' } });
+  calls.length = 0;
+  await new BloxityIdentity().verify('slug-check');
+  check(
+    'tokens are verified against the PORTAL slug, not the hosting id in BLOXITY_GAME_ID',
+    JSON.parse(calls[0]?.init?.body ?? '{}').gameSlug,
+    'speed-broom',
+  );
+  const shared = await import('../shared/dist/index.js');
+  check('  and the client SDK is initialised with the same slug', shared.BLOXITY_GAME_SLUG, 'speed-broom');
 }
 
 // -------------------------------------------------------- display identity

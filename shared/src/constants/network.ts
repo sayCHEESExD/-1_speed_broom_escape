@@ -28,20 +28,23 @@ export const DEFAULT_SERVER_PORT = 2569;
 export const MAX_PLAYERS_PER_ROOM = 15;
 
 /**
- * The slug this game is registered under on bloxity.io.
+ * The game's slug on the Bloxity PORTAL - `bloxity.io/v1/games` lists this
+ * game as `slug: "speed-broom"`.
  *
- * In `shared` because BOTH halves need it and must agree. The client passes it
- * to `Legion.SDK.init`, which selects the Bux catalogue; the server passes it
- * when it verifies a player's Bloxity token, because Bloxity issues game-scoped
- * tokens and checks them against the game they were issued for. Two copies of
- * the literal would be two places for a rename to miss one - and a server
- * verifying against the wrong slug refuses every signed-in player it has.
+ * NOT the Legion HOSTING id. That one is `speed-broom-escape` - the
+ * `BLOXITY_GAME_ID` Legion injects, the deploy workflow's app id and the play
+ * URL - and it is a different identifier. The portal issues each player's game
+ * token for ITS slug (`POST /v1/auth/game-token { gameSlug: "speed-broom" }`)
+ * and Bloxity's verify rejects a token checked against any other. Verifying
+ * against the hosting id refused EVERY signed-in player, so every account was
+ * saved per browser and progress never followed a player between devices.
  *
- * Each side may override it at deploy time (`VITE_BLOXITY_GAME_ID` for the
- * client build, `BLOXITY_GAME_ID` for the server), and the deploy workflow sets
- * both from the same value.
+ * In `shared` because both halves need it and must agree: the client passes it
+ * to `Legion.SDK.init` (the Bux catalogue, and a standalone login's token), the
+ * server to Bloxity's token verify. Deliberately NOT overridable from the
+ * hosting environment, which only knows the hosting id.
  */
-export const BLOXITY_GAME_SLUG = 'speed-broom-escape';
+export const BLOXITY_GAME_SLUG = 'speed-broom';
 
 /** Server simulation / state broadcast rate, in Hz. */
 export const SERVER_TICK_RATE = 20;

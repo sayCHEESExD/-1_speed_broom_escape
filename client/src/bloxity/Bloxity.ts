@@ -14,20 +14,15 @@ import type {
 const SCOPE = 'bloxity';
 
 /**
- * The slug this game is registered under on bloxity.io.
+ * The game's slug on the Bloxity PORTAL (`speed-broom`), from `shared`, where
+ * the SERVER reads it too to verify players' tokens.
  *
- * Overridable at BUILD time by `VITE_BLOXITY_GAME_ID`, which is what the
- * deploy workflow passes - so a build for a differently-registered channel or
- * a renamed game needs no code change. The default comes from `shared`, where
- * the SERVER reads it too: the server verifies players' tokens against this
- * slug, and the two disagreeing would refuse every signed-in player.
- *
- * Baked in at build time like every other Vite variable, so changing it means
- * rebuilding; there is no later step in which to inject it.
+ * Not overridable at build time: the only id the deploy workflow has is
+ * Legion's HOSTING id (`speed-broom-escape`), a different identifier, and a
+ * slug taken from it is the mismatch that refused every signed-in player. See
+ * `BLOXITY_GAME_SLUG`.
  */
-export const GAME_SLUG =
-  (import.meta.env['VITE_BLOXITY_GAME_ID'] as string | undefined)?.trim() ||
-  BLOXITY_GAME_SLUG;
+export const GAME_SLUG = BLOXITY_GAME_SLUG;
 
 /**
  * Every portal setting this game answers to.

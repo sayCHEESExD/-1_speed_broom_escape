@@ -19,7 +19,11 @@
 import { readFileSync } from 'node:fs';
 
 const VERIFY_URL = 'https://api.bloxity.io/v1/auth/game-token/verify';
-const EXPECTED_SLUG = process.env.STUB_EXPECTED_SLUG ?? 'speed-broom-escape';
+// The PORTAL slug - what the portal issues tokens for. NOT the hosting id
+// `speed-broom-escape`, which the test server is still given as
+// BLOXITY_GAME_ID exactly as Legion injects it, so every verified join here
+// also proves the server does not verify against the hosting id.
+const EXPECTED_SLUG = process.env.STUB_EXPECTED_SLUG ?? 'speed-broom';
 const CONTROL = process.env.STUB_CONTROL ?? '';
 
 const control = () => {

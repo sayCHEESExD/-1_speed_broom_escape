@@ -132,7 +132,15 @@ export class BloxityIdentity {
         return UNAVAILABLE;
       }
       if (!response.ok) {
-        logger.info(SCOPE, `a token was rejected (HTTP ${response.status}); playing as a guest`);
+        // A token issued for another game is the one rejection with a known
+        // fix, so name it. Read from the token's payload for THIS LOG LINE
+        // ONLY - nothing is ever decided from an unverified claim.
+        const issuedFor = tokenGameSlug(token);
+        const mismatch =
+          issuedFor && issuedFor !== this.gameSlug
+            ? ` - the token was issued for game "${issuedFor}" but this server verifies for "${this.gameSlug}"`
+            : '';
+        logger.info(SCOPE, `a token was rejected (HTTP ${response.status}); playing as a guest${mismatch}`);
         this.remember(key, REJECTED, Date.now() + REJECTED_TTL_MS);
         return REJECTED;
       }
@@ -197,6 +205,25 @@ const hashToken = (token: string): string => createHash('sha256').update(token).
  * trusted, which is safe to take from an unverified token. The SDK reads it
  * the same way (`isTokenExpired`), and treats a token with no `exp` as valid.
  */
+/**
+ * The `gameSlug` claim of a token, UNVERIFIED - for a diagnostic log line and
+ * nothing else. Null when the token has no readable one.
+ */
+const tokenGameSlug = (token: string): string | null => {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1] as string, 'base64url').toString('utf8')) as {
+      gameSlug?: unknown;
+    };
+    return typeof payload.gameSlug === 'string' && /^[a-z0-9-]{1,64}$/.test(payload.gameSlug)
+      ? payload.gameSlug
+      : null;
+  } catch {
+    return null;
+  }
+};
+
 const tokenExpiry = (token: string): number | null => {
   const parts = token.split('.');
   if (parts.length !== 3) return null;

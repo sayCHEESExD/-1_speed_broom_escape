@@ -25,9 +25,11 @@ export interface FlightConfig {
   /**
    * Meter seconds refilled per second STANDING ON THE GROUND.
    *
-   * Well under the drain rate on purpose. A broom that refilled as fast as it
+   * Under the drain rate on purpose. A broom that refilled as fast as it
    * emptied would turn every landing into a full tank and make the capacity
    * ladder meaningless - the player would simply touch down between gaps.
+   * (It was 0.45, which made resting on a platform a long wait: an empty
+   * starter tank took over 20 s to refill. At 0.9 it is about 11 s.)
    */
   readonly regenPerSecond: number;
   /**
@@ -85,7 +87,7 @@ export interface FlightConfig {
 
 export const FLIGHT: FlightConfig = {
   drainPerSecond: 1,
-  regenPerSecond: 0.45,
+  regenPerSecond: 0.9,
   regenDelay: 0.6,
   thrust: 82,
   maxRise: 21,

@@ -60,7 +60,10 @@ export const serverConfig: ServerConfig = {
   // `npm run dev` and `npm start`, so a restart finds the same file either way.
   dataDir: resolve(process.env['BROOM_DATA_DIR'] ?? 'data'),
   buxWebhookSecret: process.env['BLOXITY_WEBHOOK_SECRET'] ?? '',
-  bloxityGameSlug: process.env['BLOXITY_GAME_ID']?.trim() || BLOXITY_GAME_SLUG,
+  // The PORTAL slug, always. `BLOXITY_GAME_ID` is Legion's HOSTING id - a
+  // different identifier - and verifying tokens against it refuses every
+  // signed-in player. See `BLOXITY_GAME_SLUG`.
+  bloxityGameSlug: BLOXITY_GAME_SLUG,
   mongodbUri: process.env['MONGODB_URI']?.trim() ?? '',
   podName: process.env['POD_NAME']?.trim() || `local-${process.pid}`,
 };

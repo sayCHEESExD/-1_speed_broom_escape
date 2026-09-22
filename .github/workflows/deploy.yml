@@ -216,14 +216,13 @@ jobs:
       - name: Build the client
         env:
           # Baked in at build time - Vite has no later step in which to inject
-          # them. The game id doubles as the Bloxity SDK slug, which selects the
-          # Bux catalogue and scopes the login token the server verifies.
-          VITE_BLOXITY_GAME_ID: ${{ env.BLOXITY_GAME_ID }}
+          # it. There is deliberately NO Bloxity slug here: the HOSTING id
+          # (BLOXITY_GAME_ID) is not the PORTAL slug the login tokens are
+          # issued for, and the portal slug lives in code (BLOXITY_GAME_SLUG).
           # This channel's Colyseus backend, per the docs' step 2.
           VITE_SERVER_URL: ${{ needs.plan.outputs.server_url }}
         run: |
           set -euo pipefail
-          echo "VITE_BLOXITY_GAME_ID=$VITE_BLOXITY_GAME_ID"
           echo "VITE_SERVER_URL=$VITE_SERVER_URL"
           npm run build:client
           # Prove the URL actually made it into the bundle, rather than trusting

@@ -61,7 +61,7 @@ const webhook = await fetch(`${HTTP}/bloxity/bux`, {
     transactionId: `txn-${VICTIM}`,
     userId: VICTIM,
     username: 'victim',
-    gameSlug: 'speed-broom-escape',
+    gameSlug: 'speed-broom',
     sku: 'wins_large',
     productName: 'Chest of Wins',
     productPrice: 0,
